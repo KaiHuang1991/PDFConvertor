@@ -1,0 +1,37 @@
+{
+  "name": "aipdf-pro",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/copy-worker.js && next dev",
+    "build": "node scripts/copy-worker.js && next build",
+    "build:fast": "node scripts/copy-worker.js && SKIP_ENV_VALIDATION=true next build",
+    "start": "next start",
+    "lint": "next lint",
+    "copy-worker": "node scripts/copy-worker.js"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.0.379",
+    "framer-motion": "^11.0.5",
+    "lucide-react": "^0.344.0",
+    "clsx": "^2.1.0",
+    "tailwind-merge": "^2.2.1",
+    "groq-sdk": "^0.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "@types/react": "^18.2.61",
+    "@types/react-dom": "^18.2.19",
+    "typescript": "^5.3.3",
+    "tailwindcss": "^3.4.1",
+    "postcss": "^8.4.35",
+    "autoprefixer": "^10.4.17",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.5"
+  }
+}
+
