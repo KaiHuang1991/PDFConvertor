@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { FileText, Sparkles, Image, ArrowRight } from "lucide-react";
 import Link from "next/link";
+import UserMenu from "@/components/UserMenu";
 
 export default function Home() {
 
@@ -18,17 +19,23 @@ export default function Home() {
                 AIPDF Pro
               </h1>
             </div>
-            <nav className="hidden md:flex gap-6">
-              <Link href="/tools" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
-                PDF工具
-              </Link>
-              <Link href="/chat" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
-                AI聊天
-              </Link>
-              <Link href="/ocr" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
-                OCR识别
-              </Link>
-            </nav>
+            <div className="flex items-center gap-4">
+              <nav className="hidden md:flex gap-6">
+                <Link href="/viewer" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
+                  PDF查看器
+                </Link>
+                <Link href="/tools" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
+                  PDF工具
+                </Link>
+                <Link href="/chat" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
+                  AI聊天
+                </Link>
+                <Link href="/ocr" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
+                  OCR识别
+                </Link>
+              </nav>
+              <UserMenu />
+            </div>
           </div>
         </div>
       </header>

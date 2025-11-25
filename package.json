@@ -11,27 +11,36 @@
     "copy-worker": "node scripts/copy-worker.js"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "clsx": "^2.1.0",
+    "framer-motion": "^11.0.5",
+    "groq-sdk": "^0.3.0",
+    "https-proxy-agent": "^7.0.6",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.344.0",
+    "mongodb": "^7.0.0",
     "next": "14.2.5",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "next-auth": "^4.24.13",
+    "nodemailer": "^7.0.10",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.0.379",
-    "framer-motion": "^11.0.5",
-    "lucide-react": "^0.344.0",
-    "clsx": "^2.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tailwind-merge": "^2.2.1",
-    "groq-sdk": "^0.3.0"
+    "undici": "^7.16.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.11.24",
+    "@types/nodemailer": "^7.0.4",
     "@types/react": "^18.2.61",
     "@types/react-dom": "^18.2.19",
-    "typescript": "^5.3.3",
-    "tailwindcss": "^3.4.1",
-    "postcss": "^8.4.35",
     "autoprefixer": "^10.4.17",
     "eslint": "^8.57.0",
-    "eslint-config-next": "14.2.5"
+    "eslint-config-next": "14.2.5",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3"
   }
 }
-

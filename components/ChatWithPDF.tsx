@@ -38,10 +38,12 @@ export default function ChatWithPDF({ files }: ChatWithPDFProps) {
     try {
       const text = await extractTextFromPDF(files[0]);
       setPdfText(text);
+      // 正确计算页数：根据 "--- 第 X 页 ---" 格式
+      const pageCount = (text.match(/--- 第 \d+ 页 ---/g) || []).length;
       setMessages([
         {
           role: "assistant",
-          content: `✅ 已成功提取PDF内容（共${text.split("\n---").length - 1}页）。您可以问我关于这份PDF的任何问题，比如："总结一下这份文档"、"第5页说了什么"、"提取关键信息"等。`,
+          content: `✅ 已成功提取PDF内容（共${pageCount}页）。您可以问我关于这份PDF的任何问题，比如："总结一下这份文档"、"第5页说了什么"、"提取关键信息"等。`,
         },
       ]);
     } catch (error: any) {
@@ -77,10 +79,24 @@ export default function ChatWithPDF({ files }: ChatWithPDFProps) {
       });
 
       if (!response.ok) {
-        throw new Error("AI服务暂时不可用，请稍后重试");
+        // 尝试读取详细的错误信息
+        let errorMessage = "AI服务暂时不可用，请稍后重试";
+        try {
+          const errorData = await response.json();
+          if (errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (e) {
+          // 如果无法解析JSON，使用默认错误信息
+          errorMessage = `请求失败 (状态码: ${response.status})`;
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
+      if (data.error) {
+        throw new Error(data.error);
+      }
       setMessages((prev) => [...prev, { role: "assistant", content: data.response }]);
     } catch (error: any) {
       setMessages((prev) => [

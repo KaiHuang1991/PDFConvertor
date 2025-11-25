@@ -8,6 +8,19 @@ npm install
 
 ## 第二步：配置API Key（1分钟）
 
+### 方案1：DeepSeek API（推荐，中国用户可用）⭐
+
+1. 访问 https://platform.deepseek.com/ 注册账号（免费）
+2. 创建API Key
+3. 创建 `.env.local` 文件：
+
+```env
+DEEPSEEK_API_KEY=你的deepseek_api_key
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+### 方案2：Groq API（需要代理，中国用户可能无法直接访问）
+
 1. 访问 https://console.groq.com/ 注册账号（免费）
 2. 创建API Key
 3. 创建 `.env.local` 文件：
@@ -15,7 +28,16 @@ npm install
 ```env
 GROQ_API_KEY=你的groq_api_key
 NEXT_PUBLIC_APP_URL=http://localhost:3000
+
+# 如果在中国，需要配置代理（可选）
+GROQ_PROXY_URL=http://proxy.example.com:8080
+# 或使用全局代理
+HTTPS_PROXY=http://proxy.example.com:8080
 ```
+
+**注意**：如果您在中国，Groq API 可能无法直接访问（会出现 403 错误）。您需要：
+- 配置代理（见 `PROXY_SETUP.md` 详细说明）
+- 或使用方案1（DeepSeek API，推荐）
 
 ## 第三步：启动（30秒）
 
