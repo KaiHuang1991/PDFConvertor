@@ -856,26 +856,278 @@ export async function batchEditPDF(
       }
 
       const page = pages[pageIndex];
+      // 获取页面尺寸，用于坐标转换（PDF坐标系从左下角开始）
+      // 注意：pdf-lib的getWidth/getHeight返回的是PDF页面的完整尺寸（点单位）
+      // 这个尺寸应该与pdf.js viewport的尺寸（scale=1.0时）完全一致
+      const pageWidth = page.getWidth();
+      const pageHeight = page.getHeight();
+      
+      // 检查页面是否有旋转（pdf-lib）
+      // 注意：pdf-lib的getRotation()返回一个对象 {type: 'degrees', angle: number}
+      // 如果页面有旋转，pdf-lib在绘制内容时会自动应用这个旋转
+      // 但是，我们想要图片在PDF中保持与canvas上显示相同的方向
+      // 所以，如果页面旋转了，我们需要相应地调整图片的绘制方式
+      const pageRotationObj = page.getRotation();
+      const pageRotation = pageRotationObj.angle || 0;
+      console.log(`页面 ${pageIndex + 1} pdf-lib旋转角度:`, pageRotationObj, {
+        angle: pageRotation,
+        note: "如果页面旋转了，pdf-lib绘制时会自动应用旋转，这可能导致图片方向不对"
+      });
+      
+      console.log(`页面 ${pageIndex + 1} PDF尺寸 (pdf-lib):`, {
+        pdfWidth: pageWidth,
+        pdfHeight: pageHeight,
+        isLandscape: pageWidth > pageHeight,
+        note: "这些尺寸应该与pdf.js viewport的尺寸一致（scale=1.0时）"
+      });
 
       for (const op of pageOps) {
         switch (op.type) {
           case "image":
             // 需要先加载图像
-            const imageBytes = await (op.data.imageFile as File).arrayBuffer();
-            const mimeType = (op.data.imageFile as File).type;
-            let image: PDFImage;
-            if (mimeType === "image/png") {
-              image = await pdf.embedPng(imageBytes);
-            } else {
-              image = await pdf.embedJpg(imageBytes);
-            }
-            page.drawImage(image, {
+            let imageBytes: ArrayBuffer;
+            let mimeType: string;
+            
+            console.log("处理图片操作，数据:", {
+              hasImageFile: !!op.data.imageFile,
+              hasImageData: !!op.data.imageData,
+              imageDataLength: op.data.imageData?.length,
               x: op.data.x,
               y: op.data.y,
               width: op.data.width,
-              height: op.data.height,
-              opacity: op.data.opacity ?? 1.0,
+              height: op.data.height
             });
+            
+            if (op.data.imageFile) {
+              // 如果有File对象，使用它
+              imageBytes = await (op.data.imageFile as File).arrayBuffer();
+              mimeType = (op.data.imageFile as File).type;
+              console.log("使用imageFile，大小:", imageBytes.byteLength, "类型:", mimeType);
+            } else if (op.data.imageData) {
+              // 如果有base64数据，转换为ArrayBuffer
+              // 支持多种图片格式
+              const base64Match = op.data.imageData.match(/^data:image\/(png|jpeg|jpg|webp|gif);base64,(.+)$/);
+              if (!base64Match) {
+                console.error("无效的base64图片数据格式，原始数据长度:", op.data.imageData?.length);
+                throw new Error("无效的base64图片数据格式");
+              }
+              const base64Data = base64Match[2];
+              try {
+                imageBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0)).buffer;
+                mimeType = `image/${base64Match[1]}`;
+                console.log("使用imageData，大小:", imageBytes.byteLength, "类型:", mimeType);
+              } catch (decodeError: any) {
+                console.error("base64解码失败:", decodeError);
+                throw new Error(`base64解码失败: ${decodeError.message}`);
+              }
+            } else {
+              console.error("图片数据缺失，操作数据:", op.data);
+              throw new Error("图片数据缺失：需要 imageFile 或 imageData");
+            }
+            
+            let image: PDFImage;
+            try {
+              if (mimeType === "image/png" || mimeType === "image/webp") {
+                image = await pdf.embedPng(imageBytes);
+              } else {
+                image = await pdf.embedJpg(imageBytes);
+              }
+              console.log("图片嵌入成功，准备绘制到页面");
+              
+              // PDF坐标系是从左下角开始的，需要转换y坐标
+              // 注意：pageWidth和pageHeight已经在上面获取了
+              const pdfY = pageHeight - op.data.y - op.data.height;
+              
+              // 检查坐标是否在页面范围内（使用PDF坐标系）
+              // op.data.y是canvas坐标（从上到下），需要转换为PDF坐标（从下到上）来检查
+              const canvasY = op.data.y;
+              const isOutOfBounds = op.data.x < 0 || canvasY < 0 || 
+                  op.data.x + op.data.width > pageWidth || 
+                  canvasY + op.data.height > pageHeight;
+              
+              if (isOutOfBounds) {
+                console.warn("图片位置超出页面范围，将调整位置:", {
+                  canvasX: op.data.x,
+                  canvasY: canvasY,
+                  pdfY: pdfY,
+                  width: op.data.width,
+                  height: op.data.height,
+                  pageWidth: pageWidth,
+                  pageHeight: pageHeight,
+                  boundsCheck: {
+                    xValid: op.data.x >= 0 && op.data.x + op.data.width <= pageWidth,
+                    yValid: canvasY >= 0 && canvasY + op.data.height <= pageHeight,
+                    xOverflow: op.data.x + op.data.width - pageWidth,
+                    yOverflow: canvasY + op.data.height - pageHeight
+                  }
+                });
+              }
+              
+              // 确保坐标在有效范围内
+              // 注意：不要强制调整坐标，如果坐标超出范围，可能是坐标转换有问题
+              // 我们应该使用原始坐标，让PDF库处理边界
+              let finalX = op.data.x;
+              let finalY = pdfY;
+              
+              // 只在确实超出范围时才调整（允许轻微的负值，因为可能是浮点误差）
+              if (finalX < -0.1) {
+                console.warn(`X坐标 ${finalX} 超出范围，调整为 0`);
+                finalX = 0;
+              } else if (finalX + op.data.width > pageWidth + 0.1) {
+                console.warn(`X坐标 ${finalX} + 宽度 ${op.data.width} = ${finalX + op.data.width} 超出页面宽度 ${pageWidth}，调整为 ${pageWidth - op.data.width}`);
+                finalX = Math.max(0, pageWidth - op.data.width);
+              }
+              
+              if (finalY < -0.1) {
+                console.warn(`Y坐标 ${finalY} 超出范围，调整为 0`);
+                finalY = 0;
+              } else if (finalY + op.data.height > pageHeight + 0.1) {
+                console.warn(`Y坐标 ${finalY} + 高度 ${op.data.height} = ${finalY + op.data.height} 超出页面高度 ${pageHeight}，调整为 ${pageHeight - op.data.height}`);
+                finalY = Math.max(0, pageHeight - op.data.height);
+              }
+              
+              console.log("绘制图片到位置:", {
+                inputX: op.data.x,
+                inputY: op.data.y,
+                inputWidth: op.data.width,
+                inputHeight: op.data.height,
+                pdfX: finalX,
+                pdfY: finalY,
+                pdfWidth: op.data.width,
+                pdfHeight: op.data.height,
+                pageWidth: pageWidth,
+                pageHeight: pageHeight,
+                isLandscape: pageWidth > pageHeight,
+                coordinateSystem: "PDF坐标系（左下角为原点，y向上）",
+                note: "检查：inputWidth应该等于pdfWidth，inputHeight应该等于pdfHeight（图片不应该旋转）"
+              });
+              
+              // 注意：pdf-lib在绘制到有旋转的页面时，会自动应用页面旋转
+              // 但是，我们在PDFEditor中已经处理了坐标转换：
+              // - 当内容是横向显示时，canvas旋转了90度，坐标已经转换回PDF原始坐标系
+              // - 所以这里直接使用转换后的坐标和尺寸即可
+              // 
+              // 重要：如果PDF页面本身有旋转（pageRotation），pdf-lib在绘制时会自动应用这个旋转
+              // 但是，如果只是内容横向显示（页面未旋转），canvas已经旋转了，坐标已经转换了
+              // 所以，我们需要检查页面是否有旋转，如果有，可能需要特殊处理
+              
+              console.log("准备绘制图片:", {
+                x: finalX,
+                y: finalY,
+                width: op.data.width,
+                height: op.data.height,
+                pageRotation: pageRotation,
+                pageWidth: pageWidth,
+                pageHeight: pageHeight,
+                note: pageRotation !== 0 
+                  ? "页面有旋转，pdf-lib会自动应用旋转"
+                  : "页面无旋转，直接绘制"
+              });
+              
+              // 处理图片旋转
+              // pdf-lib不支持直接旋转图片，所以我们需要先旋转图片再嵌入
+              const rotation = op.data.rotation || 0;
+              
+              if (rotation !== 0) {
+                // 使用canvas旋转图片，然后重新嵌入
+                // 注意：这需要在浏览器环境中运行
+                if (typeof document === 'undefined') {
+                  console.warn('无法在服务端旋转图片，跳过旋转');
+                  page.drawImage(image, {
+                    x: finalX,
+                    y: finalY,
+                    width: op.data.width,
+                    height: op.data.height,
+                    opacity: op.data.opacity ?? 1.0,
+                  });
+                  break;
+                }
+                
+                try {
+                  // 创建临时canvas来旋转图片
+                  const canvas = document.createElement('canvas');
+                  const ctx = canvas.getContext('2d');
+                  if (!ctx) throw new Error('无法创建canvas context');
+                  
+                  // 加载原始图片
+                  const img = new Image();
+                  await new Promise<void>((resolve, reject) => {
+                    img.onload = () => {
+                      // 计算旋转后的canvas尺寸
+                      const radians = (rotation * Math.PI) / 180;
+                      const cos = Math.abs(Math.cos(radians));
+                      const sin = Math.abs(Math.sin(radians));
+                      const newWidth = img.width * cos + img.height * sin;
+                      const newHeight = img.width * sin + img.height * cos;
+                      
+                      canvas.width = newWidth;
+                      canvas.height = newHeight;
+                      
+                      // 旋转并绘制图片
+                      ctx.translate(newWidth / 2, newHeight / 2);
+                      ctx.rotate(radians);
+                      ctx.drawImage(img, -img.width / 2, -img.height / 2);
+                      
+                      resolve();
+                    };
+                    img.onerror = reject;
+                    
+                    // 从base64加载图片
+                    if (op.data.imageData) {
+                      img.src = op.data.imageData;
+                    } else {
+                      reject(new Error('无法获取图片数据'));
+                    }
+                  });
+                  
+                  // 将旋转后的canvas转换为blob，然后嵌入
+                  const rotatedImageData = canvas.toDataURL('image/png');
+                  const base64Data = rotatedImageData.split(',')[1];
+                  const rotatedImageBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+                  
+                  // 重新嵌入旋转后的图片
+                  const rotatedImage = await pdf.embedPng(rotatedImageBytes);
+                  
+                  // 计算旋转后的尺寸（保持原始显示尺寸）
+                  const scaleX = op.data.width / (rotation === 90 || rotation === 270 ? op.data.height : op.data.width);
+                  const scaleY = op.data.height / (rotation === 90 || rotation === 270 ? op.data.width : op.data.height);
+                  
+                  // 绘制旋转后的图片
+                  page.drawImage(rotatedImage, {
+                    x: finalX,
+                    y: finalY,
+                    width: op.data.width,
+                    height: op.data.height,
+                    opacity: op.data.opacity ?? 1.0,
+                  });
+                  
+                  console.log(`图片已旋转 ${rotation} 度并嵌入到PDF`);
+                } catch (rotateError: any) {
+                  console.error('旋转图片失败，使用原始图片:', rotateError);
+                  // 如果旋转失败，使用原始图片
+                  page.drawImage(image, {
+                    x: finalX,
+                    y: finalY,
+                    width: op.data.width,
+                    height: op.data.height,
+                    opacity: op.data.opacity ?? 1.0,
+                  });
+                }
+              } else {
+                // 没有旋转，直接绘制
+                page.drawImage(image, {
+                  x: finalX,
+                  y: finalY, // 转换为PDF坐标系
+                  width: op.data.width,  // 直接使用
+                  height: op.data.height, // 直接使用
+                  opacity: op.data.opacity ?? 1.0,
+                });
+              }
+              console.log("图片绘制完成");
+            } catch (embedError: any) {
+              console.error("嵌入或绘制图片失败:", embedError);
+              throw new Error(`图片处理失败: ${embedError.message || "未知错误"}`);
+            }
             break;
 
           case "shape":
@@ -974,18 +1226,54 @@ export async function batchEditPDF(
             break;
 
           case "signature":
-            // 与image相同
-            const sigBytes = await (op.data.signatureImage as File).arrayBuffer();
-            const sigMimeType = (op.data.signatureImage as File).type;
+            // 与image相同，支持File对象或base64数据
+            let sigBytes: ArrayBuffer;
+            let sigMimeType: string;
+            
+            if (op.data.signatureImage) {
+              // 如果有File对象，使用它
+              sigBytes = await (op.data.signatureImage as File).arrayBuffer();
+              sigMimeType = (op.data.signatureImage as File).type;
+            } else if (op.data.imageData) {
+              // 如果有base64数据，转换为ArrayBuffer
+              // 支持多种图片格式
+              const base64Match = op.data.imageData.match(/^data:image\/(png|jpeg|jpg|webp|gif);base64,(.+)$/);
+              if (!base64Match) {
+                throw new Error("无效的base64签名数据格式");
+              }
+              const base64Data = base64Match[2];
+              sigBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0)).buffer;
+              sigMimeType = `image/${base64Match[1]}`;
+            } else {
+              throw new Error("签名数据缺失：需要 signatureImage 或 imageData");
+            }
+            
             let sigImage: PDFImage;
             if (sigMimeType === "image/png") {
               sigImage = await pdf.embedPng(sigBytes);
             } else {
               sigImage = await pdf.embedJpg(sigBytes);
             }
+            // PDF坐标系是从左下角开始的，需要转换y坐标（使用之前定义的pageHeight）
+            const pageWidth = page.getWidth();
+            const pdfY = pageHeight - op.data.y - op.data.height;
+            
+            // 确保坐标在有效范围内
+            const finalX = Math.max(0, Math.min(op.data.x, pageWidth - op.data.width));
+            const finalY = Math.max(0, Math.min(pdfY, pageHeight - op.data.height));
+            
+            console.log("绘制签名到位置:", {
+              originalX: op.data.x,
+              originalY: op.data.y,
+              finalX: finalX,
+              finalY: finalY,
+              width: op.data.width,
+              height: op.data.height
+            });
+            
             page.drawImage(sigImage, {
-              x: op.data.x,
-              y: op.data.y,
+              x: finalX,
+              y: finalY, // 转换为PDF坐标系
               width: op.data.width,
               height: op.data.height,
               opacity: op.data.opacity ?? 1.0,
@@ -1005,10 +1293,13 @@ export async function batchEditPDF(
       }
     }
 
+    console.log("所有操作处理完成，准备保存PDF");
     const pdfBytes = await pdf.save();
+    console.log("PDF保存成功，大小:", pdfBytes.length, "字节");
     return new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
   } catch (error: any) {
     console.error("批量编辑失败:", error);
+    console.error("错误堆栈:", error.stack);
     throw new Error(`批量编辑失败: ${error.message || "未知错误"}`);
   }
 }

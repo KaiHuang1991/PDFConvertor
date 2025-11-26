@@ -62,18 +62,171 @@ export default function PDFEditor() {
   const [formFields, setFormFields] = useState<Map<string, string>>(new Map());
   const [showPageManager, setShowPageManager] = useState(false);
   const [pageOrder, setPageOrder] = useState<number[]>([]);
+  const [selectedOpId, setSelectedOpId] = useState<string | null>(null);
+  const [dragState, setDragState] = useState<{ opId: string; startX: number; startY: number; opX: number; opY: number } | null>(null);
+  const [resizeState, setResizeState] = useState<{ opId: string; startX: number; startY: number; startWidth: number; startHeight: number } | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const signatureInputRef = useRef<HTMLInputElement>(null);
+  const renderTaskRef = useRef<any>(null);
 
+  // 使用useRef来跟踪是否正在拖拽，避免拖拽时频繁重新渲染PDF
+  const isDraggingRef = useRef(false);
+  
   useEffect(() => {
+    // 如果正在拖拽，不重新渲染PDF（只更新图片位置）
+    if (isDraggingRef.current || dragState || resizeState) {
+      return;
+    }
+    
     if (pdfInstance) {
       renderPage(currentPage, pdfInstance, scale);
     }
-  }, [pdfInstance, currentPage, scale, operations]);
+    
+    // 清理函数：组件卸载时取消渲染任务
+    return () => {
+      if (renderTaskRef.current) {
+        renderTaskRef.current.cancel();
+        renderTaskRef.current = null;
+      }
+    };
+  }, [pdfInstance, currentPage, scale, operations, dragState, resizeState]);
+  
+  // 拖拽结束后重新渲染
+  useEffect(() => {
+    if (!dragState && !resizeState && pdfInstance && isDraggingRef.current) {
+      isDraggingRef.current = false;
+      renderPage(currentPage, pdfInstance, scale);
+    }
+  }, [dragState, resizeState, pdfInstance, currentPage, scale]);
+
+  // 拖拽和调整大小的事件处理
+  useEffect(() => {
+    if (!dragState && !resizeState) return;
+
+    const handleMouseMove = async (e: MouseEvent) => {
+      if (dragState) {
+        isDraggingRef.current = true;
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (!rect || !canvasRef.current) return;
+        const scaleX = canvasRef.current.width / rect.width;
+        const scaleY = canvasRef.current.height / rect.height;
+        const deltaX = (e.clientX - dragState.startX) * scaleX;
+        const deltaY = (e.clientY - dragState.startY) * scaleY;
+
+        // 使用函数式更新，避免依赖operations
+        setOperations(prev => {
+          const updated = prev.map(op => 
+            op.id === dragState.opId
+              ? { ...op, data: { ...op.data, x: dragState.opX + deltaX, y: dragState.opY + deltaY } }
+              : op
+          );
+          
+          // 实时更新canvas显示
+          const canvas = canvasRef.current;
+          if (canvas && pdfInstance) {
+            const context = canvas.getContext("2d");
+            if (context) {
+              const op = updated.find(o => o.id === dragState.opId);
+              if (op && (op.type === "image" || op.type === "signature")) {
+                // 清除旧位置（包括选中框）
+                const oldOp = prev.find(o => o.id === dragState.opId);
+                if (oldOp) {
+                  context.clearRect(
+                    Math.min(oldOp.data.x, op.data.x) - 20,
+                    Math.min(oldOp.data.y, op.data.y) - 20,
+                    Math.max(oldOp.data.width, op.data.width) + 40,
+                    Math.max(oldOp.data.height, op.data.height) + 40
+                  );
+                }
+                
+                // 重新绘制图片
+                drawSingleOperation(context, op).then(() => {
+                  // 重新绘制选中框
+                  if (selectedOpId === dragState.opId) {
+                    drawSelectionBox(context, op);
+                  }
+                });
+              }
+            }
+          }
+          
+          return updated;
+        });
+      } else if (resizeState) {
+        isDraggingRef.current = true;
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (!rect || !canvasRef.current) return;
+        const scaleX = canvasRef.current.width / rect.width;
+        const scaleY = canvasRef.current.height / rect.height;
+        const deltaX = (e.clientX - resizeState.startX) * scaleX;
+        const deltaY = (e.clientY - resizeState.startY) * scaleY;
+        
+        // 计算新的宽度和高度（基于鼠标移动的距离）
+        // 使用deltaX作为主要变化量，保持宽高比
+        const aspectRatio = resizeState.startWidth / resizeState.startHeight;
+        const newWidth = Math.max(50, Math.min(2000, resizeState.startWidth + deltaX));
+        const newHeight = newWidth / aspectRatio;
+
+        // 使用函数式更新，避免依赖operations
+        setOperations(prev => {
+          const oldOp = prev.find(o => o.id === resizeState.opId);
+          if (!oldOp) return prev;
+          
+          const updated = prev.map(o => 
+            o.id === resizeState.opId
+              ? { ...o, data: { ...o.data, width: newWidth, height: newHeight } }
+              : o
+          );
+          
+          // 实时更新canvas显示
+          const canvas = canvasRef.current;
+          if (canvas && pdfInstance) {
+            const context = canvas.getContext("2d");
+            if (context) {
+              const op = updated.find(o => o.id === resizeState.opId);
+              if (op && (op.type === "image" || op.type === "signature")) {
+                // 清除旧位置（包括选中框）
+                context.clearRect(
+                  op.data.x - 20,
+                  op.data.y - 20,
+                  Math.max(oldOp.data.width, op.data.width) + 40,
+                  Math.max(oldOp.data.height, op.data.height) + 40
+                );
+                
+                // 重新绘制图片
+                drawSingleOperation(context, op).then(() => {
+                  // 重新绘制选中框
+                  if (selectedOpId === resizeState.opId) {
+                    drawSelectionBox(context, op);
+                  }
+                });
+              }
+            }
+          }
+          
+          return updated;
+        });
+      }
+    };
+
+    const handleMouseUp = () => {
+      setDragState(null);
+      setResizeState(null);
+      isDraggingRef.current = false;
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [dragState, resizeState, operations]);
 
   const loadPdfJs = async () => {
     const pdfjsLib = await import("pdfjs-dist/build/pdf");
@@ -86,29 +239,275 @@ export default function PDFEditor() {
 
   const renderPage = async (pageNumber: number, pdfDoc: any, zoom: number) => {
     if (!canvasRef.current) return;
+    
+    // 取消之前的渲染任务
+    if (renderTaskRef.current) {
+      renderTaskRef.current.cancel();
+      renderTaskRef.current = null;
+    }
+    
     const page = await pdfDoc.getPage(pageNumber);
-    const viewport = page.getViewport({ scale: zoom });
+    
+    // 获取页面的原始尺寸（不考虑旋转）
+    const originalViewport = page.getViewport({ scale: zoom, rotation: 0 });
+    
+    // 判断PDF页面本身的尺寸方向（不是内容显示方向，而是页面原始尺寸）
+    // 只有当页面本身的宽度 > 高度时，才是真正的横向页面
+    // 如果只是内容旋转了，但页面本身是纵向的，不应该旋转canvas
+    const isPageLandscape = originalViewport.width > originalViewport.height;
+    
     const canvas = canvasRef.current;
     const context = canvas.getContext("2d");
     if (!context) return;
 
-    canvas.height = viewport.height;
-    canvas.width = viewport.width;
+    // 如果PDF页面本身是横向的，旋转canvas 90度来匹配页面方向
+    // 注意：只有当页面本身的宽度 > 高度时，才旋转canvas
+    // 如果只是内容旋转了，但页面本身是纵向的，不应该旋转canvas
+    if (isPageLandscape) {
+      // 页面本身是横向的：交换宽高，并旋转canvas
+      canvas.width = originalViewport.height;  // 使用高度作为宽度
+      canvas.height = originalViewport.width;  // 使用宽度作为高度
+    } else {
+      // 页面本身是纵向的：正常设置
+      canvas.width = originalViewport.width;
+      canvas.height = originalViewport.height;
+    }
 
-    await page.render({
-      canvasContext: context,
-      viewport,
-    }).promise;
+    // 清除canvas，设置为透明背景
+    context.clearRect(0, 0, canvas.width, canvas.height);
 
-    // 绘制已添加的操作
-    drawOperations(context, pageNumber, viewport);
+    // 保存渲染任务引用
+    context.save();
+    
+    // 如果PDF页面本身是横向的，需要旋转context来正确显示PDF内容
+    if (isPageLandscape) {
+      // 旋转90度（顺时针），使canvas方向与内容显示方向一致
+      context.translate(canvas.width, 0);
+      context.rotate(Math.PI / 2);
+      // 使用原始尺寸的viewport来渲染（但已经旋转了context）
+      const renderViewport = page.getViewport({ scale: zoom, rotation: 0 });
+      const renderTask = page.render({
+        canvasContext: context,
+        viewport: renderViewport,
+      });
+      renderTaskRef.current = renderTask;
+
+      try {
+        await renderTask.promise;
+        context.restore();
+
+        // 绘制已添加的操作（使用旋转后的坐标系）
+        await drawOperations(context, pageNumber, originalViewport);
+      } catch (err: any) {
+        context.restore();
+        if (err?.name !== "RenderingCancelledException") {
+          console.error("渲染页面失败:", err);
+        }
+      } finally {
+        if (renderTaskRef.current === renderTask) {
+          renderTaskRef.current = null;
+        }
+      }
+    } else {
+      // 内容是纵向的：正常渲染
+      const renderViewport = page.getViewport({ scale: zoom, rotation: 0 });
+      const renderTask = page.render({
+        canvasContext: context,
+        viewport: renderViewport,
+      });
+      renderTaskRef.current = renderTask;
+
+      try {
+        await renderTask.promise;
+        context.restore();
+
+        // 绘制已添加的操作
+        await drawOperations(context, pageNumber, originalViewport);
+      
+        // 绘制选中框
+        if (selectedOpId) {
+          const op = operations.find(o => o.id === selectedOpId && o.pageIndex === pageNumber - 1);
+          if (op && (op.type === "image" || op.type === "signature")) {
+            context.save();
+            context.strokeStyle = "#3b82f6";
+            context.lineWidth = 2;
+            context.setLineDash([5, 5]);
+            context.strokeRect(op.data.x, op.data.y, op.data.width, op.data.height);
+            
+            // 绘制调整大小控制点
+            context.fillStyle = "#3b82f6";
+            context.setLineDash([]);
+            context.fillRect(op.data.x + op.data.width - 8, op.data.y + op.data.height - 8, 16, 16);
+            context.strokeStyle = "#ffffff";
+            context.lineWidth = 2;
+            context.strokeRect(op.data.x + op.data.width - 8, op.data.y + op.data.height - 8, 16, 16);
+            context.restore();
+          }
+        }
+      } catch (err: any) {
+        context.restore();
+        // 忽略取消错误
+        if (err?.name !== "RenderingCancelledException") {
+          console.error("渲染页面失败:", err);
+        }
+      } finally {
+        // 如果这个任务还在引用中，清除它
+        if (renderTaskRef.current === renderTask) {
+          renderTaskRef.current = null;
+        }
+      }
+    }
   };
 
-  const drawOperations = (ctx: CanvasRenderingContext2D, pageNum: number, viewport: any) => {
+  // 绘制单个操作（用于实时更新）
+  const drawSingleOperation = async (ctx: CanvasRenderingContext2D, op: EditOperation) => {
+    ctx.save();
+    switch (op.type) {
+      case "image":
+        if (op.data.imageData) {
+          const img = new Image();
+          await new Promise<void>((resolve) => {
+            img.onload = () => {
+              ctx.globalAlpha = op.data.opacity || 1.0;
+              ctx.drawImage(img, op.data.x, op.data.y, op.data.width, op.data.height);
+              resolve();
+            };
+            img.onerror = () => resolve();
+            img.src = op.data.imageData;
+          });
+        }
+        break;
+      case "signature":
+        if (op.data.imageData) {
+          const img = new Image();
+          await new Promise<void>((resolve) => {
+            img.onload = () => {
+              ctx.globalAlpha = op.data.opacity || 1.0;
+              ctx.drawImage(img, op.data.x, op.data.y, op.data.width, op.data.height);
+              resolve();
+            };
+            img.onerror = () => resolve();
+            img.src = op.data.imageData;
+          });
+        }
+        break;
+    }
+    ctx.restore();
+  };
+
+  // 绘制选中框
+  const drawSelectionBox = (ctx: CanvasRenderingContext2D, op: EditOperation) => {
+    ctx.save();
+    ctx.strokeStyle = "#3b82f6";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(op.data.x, op.data.y, op.data.width, op.data.height);
+    
+    // 绘制调整大小控制点
+    ctx.fillStyle = "#3b82f6";
+    ctx.setLineDash([]);
+    ctx.fillRect(op.data.x + op.data.width - 8, op.data.y + op.data.height - 8, 16, 16);
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(op.data.x + op.data.width - 8, op.data.y + op.data.height - 8, 16, 16);
+    ctx.restore();
+  };
+
+  const drawOperations = async (ctx: CanvasRenderingContext2D, pageNum: number, viewport: any) => {
     const pageOps = operations.filter((op) => op.pageIndex === pageNum - 1);
-    pageOps.forEach((op) => {
+    for (const op of pageOps) {
       ctx.save();
       switch (op.type) {
+        case "image":
+          if (op.data.imageData) {
+            // 如果已经有base64数据，直接绘制
+            const img = new Image();
+            await new Promise<void>((resolve) => {
+              img.onload = () => {
+                ctx.globalAlpha = op.data.opacity || 1.0;
+                
+                // 应用旋转
+                const rotation = op.data.rotation || 0;
+                if (rotation !== 0) {
+                  // 计算图片中心点
+                  const centerX = op.data.x + op.data.width / 2;
+                  const centerY = op.data.y + op.data.height / 2;
+                  
+                  // 移动到中心点，旋转，然后绘制
+                  ctx.translate(centerX, centerY);
+                  ctx.rotate((rotation * Math.PI) / 180);
+                  ctx.drawImage(img, -op.data.width / 2, -op.data.height / 2, op.data.width, op.data.height);
+                  ctx.rotate(-(rotation * Math.PI) / 180);
+                  ctx.translate(-centerX, -centerY);
+                } else {
+                  ctx.drawImage(img, op.data.x, op.data.y, op.data.width, op.data.height);
+                }
+                resolve();
+              };
+              img.onerror = () => resolve();
+              img.src = op.data.imageData;
+            });
+          } else if (op.data.imageFile) {
+            // 如果是File对象，转换为base64
+            const reader = new FileReader();
+            await new Promise<void>((resolve) => {
+              reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                  ctx.globalAlpha = op.data.opacity || 1.0;
+                  
+                  // 应用旋转
+                  const rotation = op.data.rotation || 0;
+                  if (rotation !== 0) {
+                    // 计算图片中心点
+                    const centerX = op.data.x + op.data.width / 2;
+                    const centerY = op.data.y + op.data.height / 2;
+                    
+                    // 移动到中心点，旋转，然后绘制
+                    ctx.translate(centerX, centerY);
+                    ctx.rotate((rotation * Math.PI) / 180);
+                    ctx.drawImage(img, -op.data.width / 2, -op.data.height / 2, op.data.width, op.data.height);
+                    ctx.rotate(-(rotation * Math.PI) / 180);
+                    ctx.translate(-centerX, -centerY);
+                  } else {
+                    ctx.drawImage(img, op.data.x, op.data.y, op.data.width, op.data.height);
+                  }
+                  resolve();
+                };
+                img.onerror = () => resolve();
+                img.src = e.target?.result as string;
+                // 保存base64到data中，避免重复读取
+                op.data.imageData = e.target?.result as string;
+              };
+              reader.onerror = () => resolve();
+              reader.readAsDataURL(op.data.imageFile);
+            });
+          }
+          break;
+        case "signature":
+          if (op.data.signatureImage) {
+            const reader = new FileReader();
+            await new Promise<void>((resolve) => {
+              reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                  ctx.globalAlpha = op.data.opacity || 1.0;
+                  ctx.drawImage(img, op.data.x, op.data.y, op.data.width, op.data.height);
+                  resolve();
+                };
+                img.onerror = () => resolve();
+                img.src = e.target?.result as string;
+                op.data.imageData = e.target?.result as string;
+              };
+              reader.onerror = () => resolve();
+              if (op.data.signatureImage instanceof File) {
+                reader.readAsDataURL(op.data.signatureImage);
+              } else {
+                resolve();
+              }
+            });
+          }
+          break;
         case "rectangle":
           if (op.data.fill) {
             ctx.fillStyle = `rgba(${op.data.color.join(",")}, ${op.data.opacity || 1})`;
@@ -146,7 +545,6 @@ export default function PDFEditor() {
           ctx.fillRect(op.data.x, op.data.y, op.data.width, op.data.height);
           break;
         case "underline":
-        case "strikethrough":
           ctx.strokeStyle = `rgba(${op.data.color.join(",")})`;
           ctx.lineWidth = 2;
           ctx.beginPath();
@@ -161,7 +559,7 @@ export default function PDFEditor() {
           break;
       }
       ctx.restore();
-    });
+    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -190,7 +588,7 @@ export default function PDFEditor() {
   };
 
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!canvasRef.current || activeTool === "select") return;
+    if (!canvasRef.current) return;
 
     const rect = canvasRef.current.getBoundingClientRect();
     const scaleX = canvasRef.current.width / rect.width;
@@ -198,12 +596,60 @@ export default function PDFEditor() {
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
 
+    if (activeTool === "select") {
+      // 先检查是否点击了调整大小控制点（只检查已选中的图片）
+      if (selectedOpId) {
+        const selectedOp = operations.find(op => op.id === selectedOpId && op.pageIndex === currentPage - 1);
+        if (selectedOp && (selectedOp.type === "image" || selectedOp.type === "signature")) {
+          const resizeHandleX = selectedOp.data.x + selectedOp.data.width;
+          const resizeHandleY = selectedOp.data.y + selectedOp.data.height;
+          const handleSize = 16; // 控制点大小的一半
+          
+          // 检查是否点击了调整大小控制点（右下角）
+          if (x >= resizeHandleX - handleSize && x <= resizeHandleX + handleSize &&
+              y >= resizeHandleY - handleSize && y <= resizeHandleY + handleSize) {
+            e.preventDefault();
+            e.stopPropagation();
+            setResizeState({
+              opId: selectedOpId,
+              startX: e.clientX,
+              startY: e.clientY,
+              startWidth: selectedOp.data.width,
+              startHeight: selectedOp.data.height,
+            });
+            return;
+          }
+        }
+      }
+      
+      // 检查是否点击了图片，准备拖拽
+      const pageOps = operations.filter((op) => op.pageIndex === currentPage - 1 && (op.type === "image" || op.type === "signature"));
+      const clickedOp = pageOps.find((op) => {
+        return x >= op.data.x && x <= op.data.x + op.data.width &&
+               y >= op.data.y && y <= op.data.y + op.data.height;
+      });
+      
+      if (clickedOp) {
+        setSelectedOpId(clickedOp.id);
+        setDragState({
+          opId: clickedOp.id,
+          startX: e.clientX,
+          startY: e.clientY,
+          opX: clickedOp.data.x,
+          opY: clickedOp.data.y,
+        });
+        return;
+      } else {
+        setSelectedOpId(null);
+      }
+    }
+
     if (activeTool === "textbox") {
       setTextPosition({ x, y });
       return;
     }
 
-    if (!isDrawing) {
+    if (activeTool !== "select" && !isDrawing) {
       setIsDrawing(true);
       setDrawStart({ x, y });
     }
@@ -297,16 +743,49 @@ export default function PDFEditor() {
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !pdfFile) return;
+    if (!file || !pdfFile || !canvasRef.current) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
-      setPreviewImage(event.target?.result as string);
+    reader.onload = async (event) => {
+      const imageData = event.target?.result as string;
+      
+      // 直接添加到PDF上，默认位置在左上角
+      const canvas = canvasRef.current!;
+      const defaultX = 50;
+      const defaultY = 50;
+      const defaultWidth = 200;
+      const defaultHeight = 200;
+      
+      const newOp: EditOperation = {
+        id: Date.now().toString(),
+        type: "image",
+        pageIndex: currentPage - 1,
+        data: {
+          imageFile: file,
+          imageData: imageData,
+          x: defaultX,
+          y: defaultY,
+          width: defaultWidth,
+          height: defaultHeight,
+          opacity: 1.0,
+          rotation: 0, // 旋转角度（度）
+        },
+        timestamp: Date.now(),
+      };
+      
+      setOperations([...operations, newOp]);
+      setSelectedOpId(newOp.id); // 自动选中新添加的图片
+      setActiveTool("select"); // 切换到选择工具，可以直接拖拽
+      
+      // 重新渲染以显示新图像
+      if (pdfInstance) {
+        await renderPage(currentPage, pdfInstance, scale);
+      }
     };
     reader.readAsDataURL(file);
-
-    // 等待用户点击位置
-    setActiveTool("image");
+    
+    // 重置input，允许重复选择同一文件
+    e.target.value = "";
   };
 
   const handleSignatureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -316,16 +795,26 @@ export default function PDFEditor() {
     setActiveTool("signature");
   };
 
-  const handleImagePlace = (x: number, y: number) => {
+  const handleImagePlace = async (x: number, y: number) => {
     if (!imageInputRef.current?.files?.[0] || !pdfFile) return;
 
     const file = imageInputRef.current.files[0];
+    
+    // 将文件转换为base64
+    const reader = new FileReader();
+    const imageData = await new Promise<string>((resolve, reject) => {
+      reader.onload = (e) => resolve(e.target?.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
     const newOp: EditOperation = {
       id: Date.now().toString(),
       type: "image",
       pageIndex: currentPage - 1,
       data: {
         imageFile: file,
+        imageData: imageData, // 保存base64数据
         x: Math.max(0, x - 100), // 居中放置
         y: Math.max(0, y - 100),
         width: 200,
@@ -339,7 +828,7 @@ export default function PDFEditor() {
     setActiveTool("select");
     // 重新渲染以显示新图像
     if (pdfInstance) {
-      renderPage(currentPage, pdfInstance, scale);
+      await renderPage(currentPage, pdfInstance, scale);
     }
   };
 
@@ -399,13 +888,215 @@ export default function PDFEditor() {
     setLoading(true);
     setError("");
     try {
-      const pdfOps: PDFEditOperation[] = operations.map((op) => ({
-        type: op.type === "signature" ? "signature" : op.type,
-        pageIndex: op.pageIndex,
-        data: op.data,
-      }));
+      // 现在canvas会根据PDF内容的显示方向旋转，所以坐标系统与pdf-lib一致
+      // 只需要考虑缩放比例
+      const scaleRatios = new Map<number, number>();
+      const pageIsContentLandscape = new Map<number, boolean>();
+      const pageOriginalSizes = new Map<number, { width: number; height: number }>();
+      
+      // 获取每个页面的原始尺寸和缩放比例
+      for (let pageIndex = 0; pageIndex < totalPages; pageIndex++) {
+        const page = await pdfInstance.getPage(pageIndex + 1);
+        // 获取原始尺寸的viewport（rotation: 0）
+        const originalViewport = page.getViewport({ scale: 1.0, rotation: 0 });
+        const currentViewport = page.getViewport({ scale: scale, rotation: 0 });
+        
+        // 保存原始页面尺寸，用于坐标转换
+        pageOriginalSizes.set(pageIndex, {
+          width: originalViewport.width,
+          height: originalViewport.height
+        });
+        
+        // 判断页面本身是否是横向的（基于原始尺寸，不是内容显示方向）
+        const isPageLandscape = originalViewport.width > originalViewport.height;
+        pageIsContentLandscape.set(pageIndex, isPageLandscape);
+        
+        // 如果页面本身是横向的，canvas会旋转，所以需要调整缩放比例的计算
+        // 横向时，canvas的宽高是交换的
+        const scaleRatio = isPageLandscape 
+          ? originalViewport.height / currentViewport.height  // 横向时，用高度计算
+          : originalViewport.width / currentViewport.width;   // 纵向时，用宽度计算
+        scaleRatios.set(pageIndex, scaleRatio);
+        
+        console.log(`页面 ${pageIndex + 1} 坐标转换比例:`, {
+          scale: scale,
+          scaleRatio: scaleRatio,
+          originalWidth: originalViewport.width,
+          originalHeight: originalViewport.height,
+          currentWidth: currentViewport.width,
+          currentHeight: currentViewport.height,
+          isPageLandscape: isPageLandscape,
+          note: isPageLandscape 
+            ? "页面本身是横向：canvas已旋转90度，坐标系统与pdf-lib一致"
+            : "页面本身是纵向：canvas正常显示，坐标系统与pdf-lib一致"
+        });
+      }
+      
+      const pdfOps: PDFEditOperation[] = operations
+        .map((op) => {
+          // 映射操作类型
+          let mappedType: "image" | "shape" | "annotation" | "signature" | "form";
+          if (op.type === "image") {
+            mappedType = "image";
+          } else if (op.type === "signature") {
+            mappedType = "signature";
+          } else if (op.type === "rectangle" || op.type === "circle" || op.type === "line") {
+            mappedType = "shape";
+            // 为shape类型添加type字段
+            op.data.type = op.type;
+          } else if (op.type === "highlight" || op.type === "underline" || op.type === "textbox") {
+            mappedType = "annotation";
+            // 为annotation类型添加type字段
+            op.data.type = op.type;
+          } else {
+            mappedType = "annotation"; // 默认
+          }
+          
+        // 对于图片和签名，确保传递正确的数据
+        let data = { ...op.data };
+        if (op.type === "image" || op.type === "signature") {
+          // 确保imageData存在
+          if (!data.imageData) {
+            console.error(`操作 ${op.id} 缺少 imageData:`, data);
+            // 如果只有imageFile，尝试转换（但这在客户端可能无法完成）
+            if (data.imageFile) {
+              console.warn("图片数据只有imageFile，无法在保存时转换，请确保imageData存在");
+            }
+            // 如果既没有imageData也没有imageFile，跳过这个操作
+            if (!data.imageFile) {
+              console.error(`操作 ${op.id} 既没有imageData也没有imageFile，将跳过`);
+              return null; // 标记为跳过
+            }
+          } else {
+            console.log(`操作 ${op.id} 有 imageData，长度:`, data.imageData.length, "前100字符:", data.imageData.substring(0, 100));
+          }
+          
+          // 坐标转换：canvas会根据PDF内容的显示方向旋转，所以坐标系统与pdf-lib一致
+          // 获取对应页面的scaleRatio和方向信息
+          const scaleRatio = scaleRatios.get(op.pageIndex) || 1.0;
+          const isContentLandscape = pageIsContentLandscape.get(op.pageIndex) || false;
+          
+          // 如果PDF内容是横向显示的，canvas已经旋转了90度
+          // 需要将canvas坐标转换回PDF原始坐标系统
+          let pdfX = data.x * scaleRatio;
+          let pdfY = data.y * scaleRatio;
+          let pdfWidth = data.width * scaleRatio;
+          let pdfHeight = data.height * scaleRatio;
+          
+          if (isContentLandscape) {
+            // 内容横向显示：canvas旋转了90度，需要转换坐标
+            // 
+            // 当canvas旋转90度后：
+            // - canvas.width = originalViewport.height（PDF的原始高度）
+            // - canvas.height = originalViewport.width（PDF的原始宽度）
+            // 
+            // canvas坐标系（旋转后）：
+            // - x轴：向下（在canvas上）
+            // - y轴：向右（在canvas上）
+            // 
+            // PDF原始坐标系：
+            // - x轴：向右
+            // - y轴：向上（从下到上）
+            // 
+            // 转换公式：
+            // - PDF的x = canvas的y（都是向右）
+            // - PDF的y = canvas的宽度 - canvas的x - 图片宽度（需要翻转）
+            // 
+            // 使用预先获取的原始页面尺寸来计算翻转
+            const pageSize = pageOriginalSizes.get(op.pageIndex);
+            if (pageSize) {
+              // 保存转换前的坐标用于调试
+              const beforeX = pdfX;
+              const beforeY = pdfY;
+              
+              // canvas旋转90度后：
+              // - canvas.width = PDF的原始高度（pageSize.height）
+              // - canvas.height = PDF的原始宽度（pageSize.width）
+              // 
+              // 用户在canvas上点击的坐标(x, y)是在旋转后的canvas坐标系中的
+              // 转换到PDF坐标系：
+              // - PDF的x = canvas的y（都是向右）
+              // - PDF的y = canvas的宽度 - canvas的x - 图片宽度（需要翻转）
+              // 
+              // 注意：pdfX和pdfY已经是缩放后的值（scale=1.0时的PDF坐标）
+              // 所以翻转时应该使用PDF的原始高度（即canvas旋转后的宽度）
+              const canvasRotatedWidth = pageSize.height; // canvas旋转后，width = PDF的height
+              
+              const tempX = pdfX;
+              const tempY = pdfY;
+              
+              // 坐标转换：canvas旋转90度后，x和y轴交换了
+              // 但是，图片的宽高不需要交换，因为：
+              // 1. 当canvas旋转90度后，context也旋转了，所以图片在canvas上显示是正确的
+              // 2. 保存到PDF时，PDF页面本身没有旋转，所以图片应该保持原样
+              // 3. 只需要转换坐标，不需要交换宽高
+              pdfX = tempY; // canvas的y -> PDF的x
+              // canvas的x -> PDF的y（翻转）：使用canvas旋转后的宽度（即PDF的原始高度）来翻转
+              pdfY = canvasRotatedWidth - tempX - pdfWidth;
+              
+              // 注意：不交换宽高，保持图片方向
+              
+              console.log(`横向PDF坐标转换 (页面 ${op.pageIndex + 1}):`, {
+                转换前: { x: beforeX, y: beforeY, width: pdfWidth, height: pdfHeight },
+                转换后: { x: pdfX, y: pdfY, width: pdfWidth, height: pdfHeight },
+                canvas旋转后宽度: canvasRotatedWidth,
+                PDF原始尺寸: { width: pageSize.width, height: pageSize.height },
+                说明: "canvas旋转90度，坐标已转换回PDF原始坐标系，宽高保持不变"
+              });
+            }
+          }
+          
+          // 转换坐标到PDF原始尺寸（scale=1.0）
+          // canvas坐标系是从上到下，PDF坐标系是从下到上，这个转换在pdf-utils中处理
+          data.x = pdfX;
+          data.y = pdfY;
+          data.width = pdfWidth;
+          data.height = pdfHeight;
+          
+          console.log(`操作 ${op.id} (页面 ${op.pageIndex + 1}) 坐标转换:`, {
+            canvasX: data.x / scaleRatio,
+            canvasY: data.y / scaleRatio,
+            canvasWidth: data.width / scaleRatio,
+            canvasHeight: data.height / scaleRatio,
+            pdfX: data.x,
+            pdfY: data.y, // canvas坐标系（从上到下），将在pdf-utils中转换为PDF坐标系
+            pdfWidth: data.width,
+            pdfHeight: data.height,
+            scaleRatio: scaleRatio,
+            isContentLandscape: isContentLandscape,
+            note: isContentLandscape 
+              ? "内容横向显示：canvas已旋转90度，坐标已转换回PDF原始坐标系"
+              : "内容纵向显示：canvas正常显示，坐标系统与pdf-lib一致"
+          });
+          
+          // 移除imageFile，只保留imageData（因为File对象无法序列化）
+          if (data.imageFile) {
+            delete data.imageFile;
+          }
+        }
+          
+          return {
+            type: mappedType,
+            pageIndex: op.pageIndex,
+            data: data,
+          } as PDFEditOperation;
+        })
+        .filter((op): op is PDFEditOperation => op !== null); // 过滤掉null值
 
+      console.log("准备保存PDF，操作数量:", pdfOps.length);
+      console.log("操作详情:", pdfOps.map(op => ({
+        type: op.type,
+        pageIndex: op.pageIndex,
+        hasImageData: !!(op.data.imageData),
+        hasImageFile: !!(op.data.imageFile),
+        x: op.data.x,
+        y: op.data.y,
+        width: op.data.width,
+        height: op.data.height
+      })));
+      
       const blob = await batchEditPDF(pdfFile, pdfOps);
+      console.log("PDF保存成功，大小:", blob.size);
       downloadBlob(blob, "edited.pdf");
     } catch (err: any) {
       setError(err.message || "保存失败");
@@ -622,36 +1313,53 @@ export default function PDFEditor() {
           </div>
 
           {/* 中间PDF预览区 */}
-          <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+          <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-lg shadow p-4 overflow-auto">
             {loading && !pdfInstance ? (
               <div className="flex items-center justify-center h-96">
                 <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
               </div>
             ) : pdfInstance ? (
-              <div className="relative">
+              <div className="relative flex justify-center items-start min-h-full">
                 <canvas
                   ref={canvasRef}
                   onMouseDown={handleCanvasMouseDown}
                   onMouseUp={handleCanvasMouseUp}
                   onClick={(e) => {
-                    if (activeTool === "image" && previewImage) {
-                      const rect = canvasRef.current!.getBoundingClientRect();
-                      const scaleX = canvasRef.current!.width / rect.width;
-                      const scaleY = canvasRef.current!.height / rect.height;
-                      const x = (e.clientX - rect.left) * scaleX;
-                      const y = (e.clientY - rect.top) * scaleY;
-                      handleImagePlace(x, y);
-                    } else if (activeTool === "signature" && signatureImage) {
+                    if (activeTool === "signature" && signatureImage) {
                       const rect = canvasRef.current!.getBoundingClientRect();
                       const scaleX = canvasRef.current!.width / rect.width;
                       const scaleY = canvasRef.current!.height / rect.height;
                       const x = (e.clientX - rect.left) * scaleX;
                       const y = (e.clientY - rect.top) * scaleY;
                       handleSignaturePlace(x, y);
+                    } else if (activeTool === "select") {
+                      // 检查是否点击了图片
+                      const rect = canvasRef.current!.getBoundingClientRect();
+                      const scaleX = canvasRef.current!.width / rect.width;
+                      const scaleY = canvasRef.current!.height / rect.height;
+                      const x = (e.clientX - rect.left) * scaleX;
+                      const y = (e.clientY - rect.top) * scaleY;
+                      
+                      // 查找点击的图片
+                      const pageOps = operations.filter((op) => op.pageIndex === currentPage - 1 && (op.type === "image" || op.type === "signature"));
+                      const clickedOp = pageOps.find((op) => {
+                        return x >= op.data.x && x <= op.data.x + op.data.width &&
+                               y >= op.data.y && y <= op.data.y + op.data.height;
+                      });
+                      
+                      if (clickedOp) {
+                        setSelectedOpId(clickedOp.id);
+                      } else {
+                        setSelectedOpId(null);
+                      }
                     }
                   }}
-                  className="border border-gray-300 dark:border-gray-600 cursor-crosshair max-w-full"
-                  style={{ cursor: activeTool === "select" ? "default" : "crosshair" }}
+                  className="border border-gray-300 dark:border-gray-600 cursor-crosshair"
+                  style={{
+                    backgroundColor: "transparent", 
+                    cursor: activeTool === "select" ? "default" : "crosshair",
+                    display: "block" // 确保canvas作为块级元素显示
+                  }}
                 />
                 {previewImage && (
                   <div className="absolute top-4 right-4 bg-white dark:bg-gray-800 p-2 rounded shadow-lg">
@@ -676,21 +1384,30 @@ export default function PDFEditor() {
             )}
           </div>
 
-          {/* 右侧操作历史 */}
+          {/* 右侧操作历史和属性面板 */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
             <h3 className="font-semibold mb-4 text-gray-800 dark:text-gray-200">操作历史</h3>
-            <div className="space-y-2 max-h-96 overflow-auto">
+            <div className="space-y-2 max-h-96 overflow-auto mb-4">
               {operations
                 .filter((op) => op.pageIndex === currentPage - 1)
                 .map((op) => (
                   <div
                     key={op.id}
-                    className="p-2 bg-gray-50 dark:bg-gray-700 rounded text-sm flex items-center justify-between"
+                    className={`p-2 rounded text-sm flex items-center justify-between cursor-pointer ${
+                      selectedOpId === op.id
+                        ? "bg-blue-100 dark:bg-blue-900/30 border-2 border-blue-500"
+                        : "bg-gray-50 dark:bg-gray-700"
+                    }`}
+                    onClick={() => setSelectedOpId(op.id)}
                   >
                     <span>{op.type}</span>
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setOperations(operations.filter((o) => o.id !== op.id));
+                        if (selectedOpId === op.id) {
+                          setSelectedOpId(null);
+                        }
                       }}
                       className="text-red-600 hover:text-red-800"
                     >
@@ -702,6 +1419,92 @@ export default function PDFEditor() {
                 <p className="text-sm text-gray-500 text-center py-4">暂无操作</p>
               )}
             </div>
+            
+            {/* 选中图片的属性面板 */}
+            {selectedOpId && (() => {
+              const selectedOp = operations.find((op) => op.id === selectedOpId);
+              if (selectedOp && (selectedOp.type === "image" || selectedOp.type === "signature")) {
+                return (
+                  <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+                    <h4 className="font-semibold mb-3 text-gray-800 dark:text-gray-200">图片属性</h4>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          旋转角度（度）
+                        </label>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="0"
+                            max="360"
+                            step="1"
+                            value={selectedOp.data.rotation || 0}
+                            onChange={(e) => {
+                              const rotation = parseInt(e.target.value) || 0;
+                              setOperations(
+                                operations.map((op) =>
+                                  op.id === selectedOpId
+                                    ? { ...op, data: { ...op.data, rotation } }
+                                    : op
+                                )
+                              );
+                            }}
+                            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                          />
+                          <button
+                            onClick={() => {
+                              const currentRotation = selectedOp.data.rotation || 0;
+                              const newRotation = (currentRotation + 90) % 360;
+                              setOperations(
+                                operations.map((op) =>
+                                  op.id === selectedOpId
+                                    ? { ...op, data: { ...op.data, rotation: newRotation } }
+                                    : op
+                                )
+                              );
+                            }}
+                            className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                            title="顺时针旋转90度"
+                          >
+                            90°
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          输入0-360度的旋转角度，或点击按钮快速旋转90度
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          透明度
+                        </label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.1"
+                          value={selectedOp.data.opacity || 1.0}
+                          onChange={(e) => {
+                            const opacity = parseFloat(e.target.value);
+                            setOperations(
+                              operations.map((op) =>
+                                op.id === selectedOpId
+                                  ? { ...op, data: { ...op.data, opacity } }
+                                  : op
+                              )
+                            );
+                          }}
+                          className="w-full"
+                        />
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          {Math.round((selectedOp.data.opacity || 1.0) * 100)}%
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
           </div>
         </div>
 
