@@ -1,4 +1,4 @@
-import { PDFDocument, PDFPage, rgb, degrees } from "pdf-lib";
+import { PDFDocument, PDFPage, rgb, degrees, PDFImage, PDFFont } from "pdf-lib";
 
 /**
  * 合并多个PDF文件
@@ -416,6 +416,600 @@ export async function extractTextFromPDF(file: File): Promise<string> {
   } catch (error) {
     console.error("提取PDF文本失败:", error);
     throw new Error("无法提取PDF文本，请确保PDF文件未加密");
+  }
+}
+
+// ============ PDF编辑功能 ============
+
+/**
+ * 插入图像到PDF
+ */
+export async function insertImage(
+  file: File,
+  imageFile: File,
+  pageIndex: number,
+  options: {
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+    opacity?: number;
+  }
+): Promise<Blob> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await PDFDocument.load(arrayBuffer);
+    const pages = pdf.getPages();
+    
+    if (pageIndex < 0 || pageIndex >= pages.length) {
+      throw new Error(`无效的页面索引: ${pageIndex}`);
+    }
+
+    const page = pages[pageIndex];
+    const imageBytes = await imageFile.arrayBuffer();
+    
+    let image: PDFImage;
+    const mimeType = imageFile.type;
+    
+    if (mimeType === "image/png") {
+      image = await pdf.embedPng(imageBytes);
+    } else if (mimeType === "image/jpeg" || mimeType === "image/jpg") {
+      image = await pdf.embedJpg(imageBytes);
+    } else {
+      throw new Error("不支持的图片格式，仅支持PNG和JPEG");
+    }
+
+    const { width: imageWidth, height: imageHeight } = image.scale(1);
+    const width = options.width || imageWidth;
+    const height = options.height || imageHeight;
+    const opacity = options.opacity ?? 1.0;
+
+    page.drawImage(image, {
+      x: options.x,
+      y: options.y,
+      width,
+      height,
+      opacity,
+    });
+
+    const pdfBytes = await pdf.save();
+    return new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
+  } catch (error: any) {
+    console.error("插入图像失败:", error);
+    throw new Error(`插入图像失败: ${error.message || "未知错误"}`);
+  }
+}
+
+/**
+ * 插入形状到PDF
+ */
+export async function insertShape(
+  file: File,
+  pageIndex: number,
+  shape: {
+    type: "rectangle" | "circle" | "line";
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+    radius?: number;
+    x2?: number;
+    y2?: number;
+    color?: [number, number, number];
+    borderColor?: [number, number, number];
+    borderWidth?: number;
+    opacity?: number;
+    fill?: boolean;
+  }
+): Promise<Blob> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await PDFDocument.load(arrayBuffer);
+    const pages = pdf.getPages();
+    
+    if (pageIndex < 0 || pageIndex >= pages.length) {
+      throw new Error(`无效的页面索引: ${pageIndex}`);
+    }
+
+    const page = pages[pageIndex];
+    const color = shape.color ? rgb(shape.color[0], shape.color[1], shape.color[2]) : rgb(0, 0, 0);
+    const borderColor = shape.borderColor 
+      ? rgb(shape.borderColor[0], shape.borderColor[1], shape.borderColor[2])
+      : rgb(0, 0, 0);
+    const borderWidth = shape.borderWidth || 1;
+    const opacity = shape.opacity ?? 1.0;
+    const fill = shape.fill ?? false;
+
+    switch (shape.type) {
+      case "rectangle":
+        if (!shape.width || !shape.height) {
+          throw new Error("矩形需要width和height");
+        }
+        if (fill) {
+          page.drawRectangle({
+            x: shape.x,
+            y: shape.y,
+            width: shape.width,
+            height: shape.height,
+            color,
+            opacity,
+          });
+        }
+        if (borderWidth > 0) {
+          page.drawRectangle({
+            x: shape.x,
+            y: shape.y,
+            width: shape.width,
+            height: shape.height,
+            borderColor,
+            borderWidth,
+            opacity,
+          });
+        }
+        break;
+
+      case "circle":
+        if (!shape.radius) {
+          throw new Error("圆形需要radius");
+        }
+        if (fill) {
+          page.drawCircle({
+            x: shape.x,
+            y: shape.y,
+            size: shape.radius,
+            color,
+            opacity,
+          });
+        }
+        if (borderWidth > 0) {
+          page.drawCircle({
+            x: shape.x,
+            y: shape.y,
+            size: shape.radius,
+            borderColor,
+            borderWidth,
+            opacity,
+          });
+        }
+        break;
+
+      case "line":
+        if (shape.x2 === undefined || shape.y2 === undefined) {
+          throw new Error("直线需要x2和y2");
+        }
+        page.drawLine({
+          start: { x: shape.x, y: shape.y },
+          end: { x: shape.x2, y: shape.y2 },
+          color: borderColor,
+          thickness: borderWidth,
+          opacity,
+        });
+        break;
+    }
+
+    const pdfBytes = await pdf.save();
+    return new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
+  } catch (error: any) {
+    console.error("插入形状失败:", error);
+    throw new Error(`插入形状失败: ${error.message || "未知错误"}`);
+  }
+}
+
+/**
+ * 添加注释（高亮、下划线、文本框）
+ */
+export async function addAnnotation(
+  file: File,
+  pageIndex: number,
+  annotation: {
+    type: "highlight" | "underline" | "textbox" | "strikethrough";
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+    text?: string;
+    color?: [number, number, number];
+    fontSize?: number;
+  }
+): Promise<Blob> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await PDFDocument.load(arrayBuffer);
+    const pages = pdf.getPages();
+    
+    if (pageIndex < 0 || pageIndex >= pages.length) {
+      throw new Error(`无效的页面索引: ${pageIndex}`);
+    }
+
+    const page = pages[pageIndex];
+    const font = await pdf.embedFont("Helvetica");
+    const color = annotation.color ? rgb(annotation.color[0], annotation.color[1], annotation.color[2]) : rgb(1, 1, 0);
+    const fontSize = annotation.fontSize || 12;
+
+    switch (annotation.type) {
+      case "highlight":
+        if (!annotation.width || !annotation.height) {
+          throw new Error("高亮需要width和height");
+        }
+        page.drawRectangle({
+          x: annotation.x,
+          y: annotation.y,
+          width: annotation.width,
+          height: annotation.height,
+          color,
+          opacity: 0.3,
+        });
+        break;
+
+      case "underline":
+        if (!annotation.width) {
+          throw new Error("下划线需要width");
+        }
+        page.drawLine({
+          start: { x: annotation.x, y: annotation.y },
+          end: { x: annotation.x + annotation.width, y: annotation.y },
+          color,
+          thickness: 2,
+        });
+        break;
+
+      case "strikethrough":
+        if (!annotation.width) {
+          throw new Error("删除线需要width");
+        }
+        page.drawLine({
+          start: { x: annotation.x, y: annotation.y },
+          end: { x: annotation.x + annotation.width, y: annotation.y },
+          color,
+          thickness: 2,
+        });
+        break;
+
+      case "textbox":
+        if (!annotation.text) {
+          throw new Error("文本框需要text");
+        }
+        page.drawText(annotation.text, {
+          x: annotation.x,
+          y: annotation.y,
+          size: fontSize,
+          font,
+          color,
+        });
+        break;
+    }
+
+    const pdfBytes = await pdf.save();
+    return new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
+  } catch (error: any) {
+    console.error("添加注释失败:", error);
+    throw new Error(`添加注释失败: ${error.message || "未知错误"}`);
+  }
+}
+
+/**
+ * 页面管理：添加空白页
+ */
+export async function addPage(file: File, pageIndex?: number, size?: [number, number]): Promise<Blob> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await PDFDocument.load(arrayBuffer);
+    
+    const pageSize = size || [595, 842]; // A4尺寸
+    if (pageIndex !== undefined) {
+      pdf.insertPage(pageIndex, pageSize);
+    } else {
+      pdf.addPage(pageSize);
+    }
+
+    const pdfBytes = await pdf.save();
+    return new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
+  } catch (error: any) {
+    console.error("添加页面失败:", error);
+    throw new Error(`添加页面失败: ${error.message || "未知错误"}`);
+  }
+}
+
+/**
+ * 页面管理：删除页面
+ */
+export async function deletePage(file: File, pageIndex: number): Promise<Blob> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await PDFDocument.load(arrayBuffer);
+    
+    if (pageIndex < 0 || pageIndex >= pdf.getPageCount()) {
+      throw new Error(`无效的页面索引: ${pageIndex}`);
+    }
+
+    pdf.removePage(pageIndex);
+
+    const pdfBytes = await pdf.save();
+    return new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
+  } catch (error: any) {
+    console.error("删除页面失败:", error);
+    throw new Error(`删除页面失败: ${error.message || "未知错误"}`);
+  }
+}
+
+/**
+ * 页面管理：重排页面顺序
+ */
+export async function reorderPages(file: File, newOrder: number[]): Promise<Blob> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await PDFDocument.load(arrayBuffer);
+    const pageCount = pdf.getPageCount();
+    
+    if (newOrder.length !== pageCount) {
+      throw new Error(`页面顺序数组长度必须等于PDF页数: ${pageCount}`);
+    }
+
+    // 验证新顺序是否有效
+    const sorted = [...newOrder].sort((a, b) => a - b);
+    for (let i = 0; i < pageCount; i++) {
+      if (sorted[i] !== i) {
+        throw new Error(`无效的页面顺序，必须包含0到${pageCount - 1}的所有数字`);
+      }
+    }
+
+    // 创建新PDF并按照新顺序复制页面
+    const newPdf = await PDFDocument.create();
+    const pages = await newPdf.copyPages(pdf, newOrder);
+    pages.forEach((page) => newPdf.addPage(page));
+
+    const pdfBytes = await newPdf.save();
+    return new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
+  } catch (error: any) {
+    console.error("重排页面失败:", error);
+    throw new Error(`重排页面失败: ${error.message || "未知错误"}`);
+  }
+}
+
+/**
+ * 填写PDF表单字段
+ */
+export async function fillFormField(
+  file: File,
+  fieldName: string,
+  value: string
+): Promise<Blob> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await PDFDocument.load(arrayBuffer);
+    
+    const form = pdf.getForm();
+    const field = form.getTextField(fieldName);
+    
+    if (!field) {
+      throw new Error(`找不到表单字段: ${fieldName}`);
+    }
+
+    field.setText(value);
+
+    const pdfBytes = await pdf.save();
+    return new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
+  } catch (error: any) {
+    console.error("填写表单失败:", error);
+    throw new Error(`填写表单失败: ${error.message || "未知错误"}`);
+  }
+}
+
+/**
+ * 添加签名（图片签名）
+ */
+export async function addSignature(
+  file: File,
+  signatureImage: File,
+  pageIndex: number,
+  options: {
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+    opacity?: number;
+  }
+): Promise<Blob> {
+  try {
+    // 使用insertImage函数，但可以添加特定的签名样式
+    return await insertImage(file, signatureImage, pageIndex, {
+      ...options,
+      opacity: options.opacity ?? 1.0,
+    });
+  } catch (error: any) {
+    console.error("添加签名失败:", error);
+    throw new Error(`添加签名失败: ${error.message || "未知错误"}`);
+  }
+}
+
+/**
+ * 批量编辑PDF（支持多个操作）
+ */
+export interface PDFEditOperation {
+  type: "image" | "shape" | "annotation" | "signature" | "form";
+  pageIndex: number;
+  data: any;
+}
+
+export async function batchEditPDF(
+  file: File,
+  operations: PDFEditOperation[]
+): Promise<Blob> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    let pdf = await PDFDocument.load(arrayBuffer);
+
+    // 按页面分组操作
+    const operationsByPage = new Map<number, PDFEditOperation[]>();
+    operations.forEach((op) => {
+      if (!operationsByPage.has(op.pageIndex)) {
+        operationsByPage.set(op.pageIndex, []);
+      }
+      operationsByPage.get(op.pageIndex)!.push(op);
+    });
+
+    // 处理每个页面的操作
+    for (const [pageIndex, pageOps] of operationsByPage) {
+      const pages = pdf.getPages();
+      if (pageIndex < 0 || pageIndex >= pages.length) {
+        throw new Error(`无效的页面索引: ${pageIndex}`);
+      }
+
+      const page = pages[pageIndex];
+
+      for (const op of pageOps) {
+        switch (op.type) {
+          case "image":
+            // 需要先加载图像
+            const imageBytes = await (op.data.imageFile as File).arrayBuffer();
+            const mimeType = (op.data.imageFile as File).type;
+            let image: PDFImage;
+            if (mimeType === "image/png") {
+              image = await pdf.embedPng(imageBytes);
+            } else {
+              image = await pdf.embedJpg(imageBytes);
+            }
+            page.drawImage(image, {
+              x: op.data.x,
+              y: op.data.y,
+              width: op.data.width,
+              height: op.data.height,
+              opacity: op.data.opacity ?? 1.0,
+            });
+            break;
+
+          case "shape":
+            // 使用insertShape的逻辑
+            const shapeColor = op.data.color 
+              ? rgb(op.data.color[0], op.data.color[1], op.data.color[2])
+              : rgb(0, 0, 0);
+            const borderColor = op.data.borderColor
+              ? rgb(op.data.borderColor[0], op.data.borderColor[1], op.data.borderColor[2])
+              : rgb(0, 0, 0);
+            
+            if (op.data.type === "rectangle") {
+              if (op.data.fill) {
+                page.drawRectangle({
+                  x: op.data.x,
+                  y: op.data.y,
+                  width: op.data.width,
+                  height: op.data.height,
+                  color: shapeColor,
+                  opacity: op.data.opacity ?? 1.0,
+                });
+              }
+              if (op.data.borderWidth > 0) {
+                page.drawRectangle({
+                  x: op.data.x,
+                  y: op.data.y,
+                  width: op.data.width,
+                  height: op.data.height,
+                  borderColor,
+                  borderWidth: op.data.borderWidth || 1,
+                  opacity: op.data.opacity ?? 1.0,
+                });
+              }
+            } else if (op.data.type === "circle") {
+              if (op.data.fill) {
+                page.drawCircle({
+                  x: op.data.x,
+                  y: op.data.y,
+                  size: op.data.radius,
+                  color: shapeColor,
+                  opacity: op.data.opacity ?? 1.0,
+                });
+              }
+              if (op.data.borderWidth > 0) {
+                page.drawCircle({
+                  x: op.data.x,
+                  y: op.data.y,
+                  size: op.data.radius,
+                  borderColor,
+                  borderWidth: op.data.borderWidth || 1,
+                  opacity: op.data.opacity ?? 1.0,
+                });
+              }
+            } else if (op.data.type === "line") {
+              page.drawLine({
+                start: { x: op.data.x, y: op.data.y },
+                end: { x: op.data.x2, y: op.data.y2 },
+                color: borderColor,
+                thickness: op.data.borderWidth || 1,
+                opacity: op.data.opacity ?? 1.0,
+              });
+            }
+            break;
+
+          case "annotation":
+            const font = await pdf.embedFont("Helvetica");
+            const annColor = op.data.color 
+              ? rgb(op.data.color[0], op.data.color[1], op.data.color[2])
+              : rgb(1, 1, 0);
+            
+            if (op.data.type === "highlight") {
+              page.drawRectangle({
+                x: op.data.x,
+                y: op.data.y,
+                width: op.data.width,
+                height: op.data.height,
+                color: annColor,
+                opacity: 0.3,
+              });
+            } else if (op.data.type === "underline" || op.data.type === "strikethrough") {
+              page.drawLine({
+                start: { x: op.data.x, y: op.data.y },
+                end: { x: op.data.x + op.data.width, y: op.data.y },
+                color: annColor,
+                thickness: 2,
+              });
+            } else if (op.data.type === "textbox") {
+              page.drawText(op.data.text, {
+                x: op.data.x,
+                y: op.data.y,
+                size: op.data.fontSize || 12,
+                font,
+                color: annColor,
+              });
+            }
+            break;
+
+          case "signature":
+            // 与image相同
+            const sigBytes = await (op.data.signatureImage as File).arrayBuffer();
+            const sigMimeType = (op.data.signatureImage as File).type;
+            let sigImage: PDFImage;
+            if (sigMimeType === "image/png") {
+              sigImage = await pdf.embedPng(sigBytes);
+            } else {
+              sigImage = await pdf.embedJpg(sigBytes);
+            }
+            page.drawImage(sigImage, {
+              x: op.data.x,
+              y: op.data.y,
+              width: op.data.width,
+              height: op.data.height,
+              opacity: op.data.opacity ?? 1.0,
+            });
+            break;
+
+          case "form":
+            const form = pdf.getForm();
+            try {
+              const field = form.getTextField(op.data.fieldName);
+              field.setText(op.data.value);
+            } catch (e) {
+              console.warn(`无法填写表单字段 ${op.data.fieldName}:`, e);
+            }
+            break;
+        }
+      }
+    }
+
+    const pdfBytes = await pdf.save();
+    return new Blob([pdfBytes as BlobPart], { type: "application/pdf" });
+  } catch (error: any) {
+    console.error("批量编辑失败:", error);
+    throw new Error(`批量编辑失败: ${error.message || "未知错误"}`);
   }
 }
 

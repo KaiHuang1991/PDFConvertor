@@ -24,6 +24,9 @@ export default function Home() {
                 <Link href="/viewer" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
                   PDF查看器
                 </Link>
+                <Link href="/editor" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
+                  PDF编辑器
+                </Link>
                 <Link href="/tools" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
                   PDF工具
                 </Link>
@@ -68,6 +71,12 @@ export default function Home() {
               title: "PDF基础操作", 
               desc: "合并、拆分、压缩、解锁密码、加水印，全部前端运行",
               href: "/tools"
+            },
+            { 
+              icon: Image, 
+              title: "PDF编辑器", 
+              desc: "图像/形状插入、注释标记、页面管理、表单填写、签名添加",
+              href: "/editor"
             },
             { 
               icon: Sparkles, 
