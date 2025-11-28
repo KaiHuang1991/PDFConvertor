@@ -19,7 +19,9 @@ export default function FileUploader({ files, onFilesChange }: FileUploaderProps
       setIsDragging(false);
 
       const droppedFiles = Array.from(e.dataTransfer.files).filter(
-        (file) => file.type === "application/pdf"
+        (file) => 
+          file.type === "application/pdf" || 
+          file.type.startsWith("image/")
       );
       onFilesChange([...files, ...droppedFiles]);
     },
@@ -29,7 +31,9 @@ export default function FileUploader({ files, onFilesChange }: FileUploaderProps
   const handleFileInput = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const selectedFiles = Array.from(e.target.files || []).filter(
-        (file) => file.type === "application/pdf"
+        (file) => 
+          file.type === "application/pdf" || 
+          file.type.startsWith("image/")
       );
       onFilesChange([...files, ...selectedFiles]);
     },
@@ -70,7 +74,7 @@ export default function FileUploader({ files, onFilesChange }: FileUploaderProps
           type="file"
           id="file-upload"
           className="hidden"
-          accept=".pdf,application/pdf"
+          accept=".pdf,application/pdf,image/*"
           multiple
           onChange={handleFileInput}
         />
@@ -93,11 +97,11 @@ export default function FileUploader({ files, onFilesChange }: FileUploaderProps
           </div>
           <div>
             <p className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-1">
-              拖拽PDF文件到这里，或{" "}
+              拖拽PDF或图片文件到这里，或{" "}
               <span className="text-blue-600 dark:text-blue-400 font-bold">点击选择文件</span>
             </p>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              支持多个PDF文件 • 完全前端处理 • 保护隐私
+              支持PDF、PNG、JPG等格式 • 完全前端处理 • 保护隐私
             </p>
           </div>
         </label>

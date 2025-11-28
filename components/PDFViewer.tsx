@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Search, RotateCw, ZoomIn, ZoomOut, Loader2, Maximize, ChevronLeft, ChevronRight, Upload, Image, Type, MousePointer, X } from "lucide-react";
+import { Search, RotateCw, ZoomIn, ZoomOut, Loader2, Maximize, ChevronLeft, ChevronRight, Upload } from "lucide-react";
 
 interface TextMatch {
   page: number;
@@ -16,17 +16,6 @@ interface HighlightRect {
   height: number;
 }
 
-interface PlacedImage {
-  id: string;
-  page: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  imageData: string; // base64
-  isDragging?: boolean;
-  isResizing?: boolean;
-}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let pdfjsLibPromise: Promise<any> | null = null;
@@ -67,23 +56,93 @@ export default function PDFViewer() {
   const [error, setError] = useState<string>("");
   const [highlights, setHighlights] = useState<Map<number, HighlightRect[]>>(new Map());
   const highlightLayerRef = useRef<HTMLCanvasElement | null>(null);
-  
-  // 编辑功能相关状态
-  const [editMode, setEditMode] = useState<"select" | "image" | "text">("select");
-  const [pendingImage, setPendingImage] = useState<string | null>(null);
-  const [placedImages, setPlacedImages] = useState<PlacedImage[]>([]);
-  const [imageLayerRef] = useState<HTMLCanvasElement | null>(null);
-  const imageLayerCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number; imageId: string } | null>(null);
-  const [resizeStart, setResizeStart] = useState<{ x: number; y: number; imageId: string; startWidth: number; startHeight: number } | null>(null);
 
   useEffect(() => {
     if (pdfInstance) {
       renderPage(currentPage, pdfInstance, scale, rotation);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfInstance, scale, rotation, currentPage, highlights, placedImages]);
+  }, [pdfInstance, scale, rotation, currentPage, highlights]);
+
+  // 当scale或rotation改变时，如果有搜索查询，重新计算高亮位置
+  useEffect(() => {
+    // 使用ref来检查是否有高亮，避免依赖highlights.size导致循环
+    const hasHighlights = highlights.size > 0;
+    
+    if (pdfInstance && searchQuery.trim() && hasHighlights) {
+      // 延迟执行，确保状态已更新
+      const timer = setTimeout(async () => {
+        try {
+          const query = searchQuery.trim();
+          const queryLower = query.toLowerCase();
+          const newHighlights = new Map<number, HighlightRect[]>();
+
+          for (let i = 1; i <= pdfInstance.numPages; i++) {
+            const page = await pdfInstance.getPage(i);
+            const textContent = await page.getTextContent();
+            
+            const pageText = textContent.items.map((item: any) => item.str).join(" ");
+            const lowerPageText = pageText.toLowerCase();
+            
+            let searchIndex = 0;
+            const pageRects: HighlightRect[] = [];
+            
+            while ((searchIndex = lowerPageText.indexOf(queryLower, searchIndex)) !== -1) {
+              let charPos = 0;
+              const matchingItems: Array<{ item: any; startChar: number; endChar: number }> = [];
+              
+              for (let j = 0; j < textContent.items.length; j++) {
+                const item = textContent.items[j];
+                const itemText = item.str;
+                const itemStart = charPos;
+                const itemEnd = charPos + itemText.length;
+                
+                if (searchIndex < itemEnd && searchIndex + query.length > itemStart) {
+                  const startChar = Math.max(0, searchIndex - itemStart);
+                  const endChar = Math.min(itemText.length, searchIndex + query.length - itemStart);
+                  matchingItems.push({ item, startChar, endChar });
+                }
+                
+                charPos = itemEnd;
+                if (j < textContent.items.length - 1) {
+                  charPos += 1;
+                }
+                
+                if (searchIndex + query.length <= itemEnd) {
+                  break;
+                }
+              }
+              
+              if (matchingItems.length > 0) {
+                // 使用最新的scale和rotation值重新计算高亮矩形
+                const rects = calculateHighlightRects(page, matchingItems, scale, rotation);
+                pageRects.push(...rects);
+              }
+              
+              searchIndex += query.length;
+            }
+            
+            if (pageRects.length > 0) {
+              newHighlights.set(i, pageRects);
+            }
+          }
+          
+          // 更新高亮状态
+          setHighlights(newHighlights);
+          
+          // 重新渲染当前页面以显示更新后的高亮
+          if (currentPage) {
+            await renderPage(currentPage, pdfInstance, scale, rotation);
+          }
+        } catch (error) {
+          console.error("重新计算高亮失败:", error);
+        }
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scale, rotation]);
 
   useEffect(() => {
     return () => {
@@ -94,20 +153,23 @@ export default function PDFViewer() {
     };
   }, []);
 
-  // 同步图片层和高亮层的尺寸
+  // 同步高亮层的尺寸
   useEffect(() => {
-    if (canvasRef.current && imageLayerCanvasRef.current && highlightLayerRef.current) {
+    if (canvasRef.current && highlightLayerRef.current) {
       const mainCanvas = canvasRef.current;
-      const imageLayer = imageLayerCanvasRef.current;
       const highlightLayer = highlightLayerRef.current;
       
-      // 同步尺寸
-      imageLayer.style.width = `${mainCanvas.width}px`;
-      imageLayer.style.height = `${mainCanvas.height}px`;
+      // 同步尺寸（使用canvas的实际像素尺寸）
       highlightLayer.style.width = `${mainCanvas.width}px`;
       highlightLayer.style.height = `${mainCanvas.height}px`;
+      
+      // 确保高亮层canvas的像素尺寸与主canvas一致
+      if (highlightLayer.width !== mainCanvas.width || highlightLayer.height !== mainCanvas.height) {
+        highlightLayer.width = mainCanvas.width;
+        highlightLayer.height = mainCanvas.height;
+      }
     }
-  }, [rendering, scale, rotation, currentPage]);
+  }, [rendering, scale, rotation, currentPage, highlights]);
 
   const renderPage = async (pageNumber: number, pdfDoc: any, zoom = scale, rotate = rotation) => {
     if (!canvasRef.current) return;
@@ -160,7 +222,7 @@ export default function PDFViewer() {
     const ctx = highlightLayer.getContext("2d");
     if (!ctx) return;
 
-    // 设置高亮层尺寸与PDF canvas一致
+    // 设置高亮层尺寸与PDF canvas完全一致
     highlightLayer.width = viewport.width;
     highlightLayer.height = viewport.height;
 
@@ -178,189 +240,17 @@ export default function PDFViewer() {
     ctx.lineWidth = 1.5;
 
     for (const rect of pageHighlights) {
-      ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
-      ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+      // 确保坐标在有效范围内
+      const x = Math.max(0, Math.min(rect.x, highlightLayer.width));
+      const y = Math.max(0, Math.min(rect.y, highlightLayer.height));
+      const width = Math.max(1, Math.min(rect.width, highlightLayer.width - x));
+      const height = Math.max(1, Math.min(rect.height, highlightLayer.height - y));
+      
+      ctx.fillRect(x, y, width, height);
+      ctx.strokeRect(x, y, width, height);
     }
   };
 
-  const deleteImage = (imageId: string) => {
-    setPlacedImages(prev => prev.filter(img => img.id !== imageId));
-    if (selectedImageId === imageId) {
-      setSelectedImageId(null);
-    }
-  };
-
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result;
-      if (typeof result === "string") {
-        setPendingImage(result);
-        setEditMode("image");
-      }
-    };
-    reader.readAsDataURL(file);
-    // 重置input，允许重复选择同一文件
-    e.target.value = "";
-  };
-
-  const handleCanvasClick = async (e: React.MouseEvent<HTMLDivElement>) => {
-    // 如果点击的是图片元素或控制按钮，不处理
-    const target = e.target as HTMLElement;
-    if (target.closest('.pdf-image-element') || target.closest('button')) {
-      return;
-    }
-
-    // 检查是否在图片放置模式
-    if (!canvasRef.current || !pdfInstance || editMode !== "image" || !pendingImage) {
-      console.log("点击条件检查:", {
-        hasCanvas: !!canvasRef.current,
-        hasPdf: !!pdfInstance,
-        editMode,
-        hasPendingImage: !!pendingImage
-      });
-      return;
-    }
-
-    const canvas = canvasRef.current;
-    const container = e.currentTarget; // 使用事件绑定的容器
-    const containerRect = container.getBoundingClientRect();
-    
-    // 计算相对于容器的坐标（考虑滚动和偏移）
-    const x = e.clientX - containerRect.left;
-    const y = e.clientY - containerRect.top;
-    
-    console.log("点击位置:", { 
-      clientX: e.clientX, 
-      clientY: e.clientY,
-      containerRect,
-      x, 
-      y,
-      canvasWidth: canvas.width,
-      canvasHeight: canvas.height
-    });
-    
-    // 创建新图片对象（坐标相对于容器）
-    const newImage: PlacedImage = {
-      id: Date.now().toString(),
-      page: currentPage,
-      x: x - 75, // 默认宽度150，居中
-      y: y - 75, // 默认高度150，居中
-      width: 150,
-      height: 150,
-      imageData: pendingImage,
-    };
-
-    console.log("创建图片:", newImage);
-    setPlacedImages(prev => {
-      const updated = [...prev, newImage];
-      console.log("更新图片列表，总数:", updated.length);
-      return updated;
-    });
-    setPendingImage(null);
-    setEditMode("select");
-    setSelectedImageId(newImage.id);
-  };
-
-  const handleImageMouseDown = (e: React.MouseEvent, imageId: string) => {
-    e.stopPropagation();
-    e.preventDefault();
-    setSelectedImageId(imageId);
-    setEditMode("select");
-    
-    const image = placedImages.find(img => img.id === imageId);
-    if (!image) return;
-
-    // 获取图片元素的当前位置
-    const imageElement = e.currentTarget as HTMLElement;
-    const container = imageElement.offsetParent as HTMLElement;
-    if (!container) return;
-
-    const containerRect = container.getBoundingClientRect();
-    const imageRect = imageElement.getBoundingClientRect();
-    
-    // 计算图片相对于容器的位置
-    const imageX = imageRect.left - containerRect.left;
-    const imageY = imageRect.top - containerRect.top;
-
-    const startX = e.clientX;
-    const startY = e.clientY;
-    setDragStart({ x: startX, y: startY, imageId });
-  };
-
-  const handleResizeMouseDown = (e: React.MouseEvent, imageId: string) => {
-    e.stopPropagation();
-    const image = placedImages.find(img => img.id === imageId);
-    if (!image) return;
-
-    const startX = e.clientX;
-    const startY = e.clientY;
-    setResizeStart({ x: startX, y: startY, imageId, startWidth: image.width, startHeight: image.height });
-  };
-
-  useEffect(() => {
-    if (!dragStart && !resizeStart) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (dragStart) {
-        const image = placedImages.find(img => img.id === dragStart.imageId);
-        if (!image) return;
-
-        // 计算鼠标移动的距离
-        const deltaX = e.clientX - dragStart.x;
-        const deltaY = e.clientY - dragStart.y;
-
-        setPlacedImages(prev => prev.map(img => 
-          img.id === dragStart.imageId
-            ? { ...img, x: img.x + deltaX, y: img.y + deltaY }
-            : img
-        ));
-
-        setDragStart({ x: e.clientX, y: e.clientY, imageId: dragStart.imageId });
-      } else if (resizeStart) {
-        const image = placedImages.find(img => img.id === resizeStart.imageId);
-        if (!image) return;
-
-        const deltaX = e.clientX - resizeStart.x;
-        const deltaY = e.clientY - resizeStart.y;
-        const aspectRatio = resizeStart.startWidth / resizeStart.startHeight;
-
-        // 保持宽高比调整大小
-        const newWidth = Math.max(50, resizeStart.startWidth + deltaX);
-        const newHeight = newWidth / aspectRatio;
-
-        setPlacedImages(prev => prev.map(img => 
-          img.id === resizeStart.imageId
-            ? { ...img, width: newWidth, height: newHeight }
-            : img
-        ));
-
-        setResizeStart({ 
-          x: e.clientX, 
-          y: e.clientY, 
-          imageId: resizeStart.imageId, 
-          startWidth: newWidth, 
-          startHeight: newHeight 
-        });
-      }
-    };
-
-    const handleMouseUp = () => {
-      setDragStart(null);
-      setResizeStart(null);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [dragStart, resizeStart, placedImages]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -382,9 +272,6 @@ export default function PDFViewer() {
       setSearchResults([]);
       setHighlights(new Map());
       setSearchQuery("");
-      setPlacedImages([]);
-      setPendingImage(null);
-      setEditMode("select");
     } catch (error: any) {
       console.error("加载PDF失败:", error);
       setError(error?.message || "加载PDF失败，请确认文件是否损坏");
@@ -416,10 +303,204 @@ export default function PDFViewer() {
     setRotation((prev) => (prev + 90) % 360);
   };
 
+
   const handleFullScreen = () => {
     if (containerRef.current && containerRef.current.requestFullscreen) {
       containerRef.current.requestFullscreen();
     }
+  };
+
+  // 计算高亮矩形（基于PDF坐标和当前视口，使用PDF.js viewport转换）
+  const calculateHighlightRects = (page: any, matchingItems: Array<{ item: any; startChar: number; endChar: number }>, currentScale: number, currentRotation: number): HighlightRect[] => {
+    // 获取当前viewport（包含旋转和缩放）
+    const viewport = page.getViewport({ scale: currentScale, rotation: currentRotation });
+    
+    // 辅助函数：将PDF坐标转换为viewport坐标（canvas坐标）
+    // 使用viewport的transform矩阵进行转换
+    const convertToViewportCoords = (pdfX: number, pdfY: number): { x: number; y: number } => {
+      // PDF.js的viewport已经包含了旋转和缩放信息
+      // 我们需要将PDF坐标转换为viewport坐标
+      // viewport.transform是一个4x4矩阵，但我们只需要2D转换
+      
+      // 获取基础viewport（未旋转）用于计算
+      const baseViewport = page.getViewport({ scale: 1.0, rotation: 0 });
+      const baseWidth = baseViewport.width;
+      const baseHeight = baseViewport.height;
+      
+      // 如果没有旋转，直接转换
+      if (currentRotation === 0) {
+        return {
+          x: pdfX * (viewport.width / baseWidth),
+          y: (baseHeight - pdfY) * (viewport.height / baseHeight)
+        };
+      }
+      
+      // 有旋转时，需要围绕页面中心旋转
+      // 首先转换为未旋转的canvas坐标
+      const unrotatedX = pdfX;
+      const unrotatedY = baseHeight - pdfY;
+      
+      // 页面中心点
+      const centerX = baseWidth / 2;
+      const centerY = baseHeight / 2;
+      
+      // 相对于中心点的坐标
+      const relX = unrotatedX - centerX;
+      const relY = unrotatedY - centerY;
+      
+      // 应用旋转（逆时针）
+      const radians = (currentRotation * Math.PI) / 180;
+      const rotatedX = relX * Math.cos(radians) - relY * Math.sin(radians);
+      const rotatedY = relX * Math.sin(radians) + relY * Math.cos(radians);
+      
+      // 旋转后的viewport中心点
+      const newCenterX = viewport.width / 2;
+      const newCenterY = viewport.height / 2;
+      
+      return {
+        x: newCenterX + rotatedX,
+        y: newCenterY + rotatedY
+      };
+    };
+    
+    // 如果只有一个匹配项，直接计算
+    if (matchingItems.length === 1) {
+      const matchItem = matchingItems[0];
+      const item = matchItem.item;
+      const transform = item.transform;
+      
+      // 获取文本的实际宽度和高度
+      const textWidth = item.width || 0;
+      const fontSize = Math.abs(transform[0]) || Math.abs(transform[3]) || 12;
+      const textHeight = item.height || fontSize;
+      
+      // 计算字符宽度
+      let charWidth: number;
+      if (textWidth > 0 && item.str.length > 0) {
+        charWidth = textWidth / item.str.length;
+      } else {
+        charWidth = fontSize;
+      }
+      
+      // 计算匹配部分的精确宽度
+      const matchWidth = (matchItem.endChar - matchItem.startChar) * charWidth;
+      
+      // PDF坐标系中的位置
+      const pdfX = transform[4];
+      const pdfY = transform[5];
+      
+      // 计算匹配文本的起始X坐标
+      const matchStartX = pdfX + (matchItem.startChar * charWidth);
+      
+      // 计算文本的垂直位置
+      const baselineRatio = 0.95;
+      const baselineOffset = textHeight * (1 - baselineRatio);
+      const pdfTextBottom = pdfY - baselineOffset;
+      const pdfTextTop = pdfY - baselineOffset + textHeight;
+      
+      // 使用viewport转换PDF坐标到viewport坐标
+      const topLeft = convertToViewportCoords(matchStartX, pdfTextTop);
+      const bottomRight = convertToViewportCoords(matchStartX + matchWidth, pdfTextBottom);
+      
+      // 计算高亮矩形的实际位置和尺寸
+      const rectX = Math.min(topLeft.x, bottomRight.x);
+      const rectY = Math.min(topLeft.y, bottomRight.y);
+      const rectWidth = Math.abs(bottomRight.x - topLeft.x);
+      const rectHeight = Math.abs(bottomRight.y - topLeft.y);
+      
+      // 计算高度：使用viewport的缩放比例
+      const baseViewport = page.getViewport({ scale: 1.0, rotation: 0 });
+      const heightScale = viewport.height / baseViewport.height;
+      const minHeight = textHeight * heightScale;
+      
+      return [{
+        x: rectX,
+        y: rectY,
+        width: Math.max(rectWidth, 2),
+        height: Math.max(rectHeight, minHeight * 1.15),
+      }];
+    }
+    
+    // 多个文本项：需要计算整体边界框
+    if (matchingItems.length > 1) {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      let maxHeight = 0;
+      
+      for (let idx = 0; idx < matchingItems.length; idx++) {
+        const matchItem = matchingItems[idx];
+        const item = matchItem.item;
+        const transform = item.transform;
+        
+        const textWidth = item.width || 0;
+        const fontSize = Math.abs(transform[0]) || Math.abs(transform[3]) || 12;
+        const textHeight = item.height || fontSize;
+        maxHeight = Math.max(maxHeight, textHeight);
+        
+        // 计算字符宽度
+        let charWidth: number;
+        if (textWidth > 0 && item.str.length > 0) {
+          charWidth = textWidth / item.str.length;
+        } else {
+          charWidth = fontSize;
+        }
+        
+        const pdfX = transform[4];
+        const pdfY = transform[5];
+        
+        let itemStartX: number;
+        let itemEndX: number;
+        
+        if (idx === 0) {
+          itemStartX = pdfX + (matchItem.startChar * charWidth);
+          itemEndX = pdfX + (textWidth > 0 ? textWidth : item.str.length * charWidth);
+        } else if (idx === matchingItems.length - 1) {
+          itemStartX = pdfX;
+          itemEndX = pdfX + (matchItem.endChar * charWidth);
+        } else {
+          itemStartX = pdfX;
+          itemEndX = pdfX + (textWidth > 0 ? textWidth : item.str.length * charWidth);
+        }
+        
+        minX = Math.min(minX, itemStartX);
+        maxX = Math.max(maxX, itemEndX);
+        
+        // 计算Y坐标
+        const baselineRatio = 0.95;
+        const baselineOffset = textHeight * (1 - baselineRatio);
+        const pdfTextBottom = pdfY - baselineOffset;
+        const pdfTextTop = pdfY - baselineOffset + textHeight;
+        
+        minY = Math.min(minY, pdfTextBottom);
+        maxY = Math.max(maxY, pdfTextTop);
+      }
+      
+      // 使用viewport转换PDF坐标到viewport坐标
+      const topLeft = convertToViewportCoords(minX, maxY);
+      const bottomRight = convertToViewportCoords(maxX, minY);
+      
+      // 计算高亮矩形的实际位置和尺寸
+      const rectX = Math.min(topLeft.x, bottomRight.x);
+      const rectY = Math.min(topLeft.y, bottomRight.y);
+      const rectWidth = Math.abs(bottomRight.x - topLeft.x);
+      const rectHeight = Math.abs(bottomRight.y - topLeft.y);
+      
+      // 计算高度：使用viewport的缩放比例
+      const baseViewport = page.getViewport({ scale: 1.0, rotation: 0 });
+      const heightScale = viewport.height / baseViewport.height;
+      const minHeight = maxHeight * heightScale;
+      
+      return [{
+        x: rectX,
+        y: rectY,
+        width: Math.max(rectWidth, 2),
+        height: Math.max(rectHeight, minHeight * 1.2),
+      }];
+    }
+    
+    return [];
   };
 
   const handleSearch = async () => {
@@ -442,7 +523,7 @@ export default function PDFViewer() {
         const page = await pdfInstance.getPage(i);
         const textContent = await page.getTextContent();
         
-        // 构建页面文本
+        // 构建页面文本（用于搜索）
         const pageText = textContent.items.map((item: any) => item.str).join(" ");
         const lowerPageText = pageText.toLowerCase();
         
@@ -480,53 +561,10 @@ export default function PDFViewer() {
             }
           }
           
-          // 计算高亮矩形
+          // 计算高亮矩形（使用当前scale和rotation）
           if (matchingItems.length > 0) {
-            const firstItem = matchingItems[0];
-            const lastItem = matchingItems[matchingItems.length - 1];
-            const firstTransform = firstItem.item.transform;
-            const lastTransform = lastItem.item.transform;
-            
-            // 计算字体大小和字符宽度
-            const fontSize = Math.abs(firstTransform[0]) || Math.abs(firstTransform[2]) || 12;
-            const charWidth = fontSize * 0.6;
-            
-            // 计算起始位置（transform[4]是x，transform[5]是y）
-            let x = firstTransform[4];
-            // PDF坐标系y轴向下，需要转换
-            const viewport = page.getViewport({ scale: 1.0 });
-            let y = viewport.height - firstTransform[5] - fontSize;
-            
-            // 计算宽度
-            let width = 0;
-            if (matchingItems.length === 1) {
-              // 单个文本项
-              width = (lastItem.endChar - firstItem.startChar) * charWidth;
-            } else {
-              // 多个文本项
-              // 第一个项的剩余部分
-              width = (firstItem.item.str.length - firstItem.startChar) * charWidth;
-              // 中间项
-              for (let k = 1; k < matchingItems.length - 1; k++) {
-                width += matchingItems[k].item.str.length * charWidth;
-              }
-              // 最后一项
-              width += lastItem.endChar * charWidth;
-            }
-            
-            const height = fontSize * 1.3;
-            
-            // 转换到当前视口
-            const currentViewport = page.getViewport({ scale: scale, rotation: rotation });
-            const scaleX = currentViewport.width / viewport.width;
-            const scaleY = currentViewport.height / viewport.height;
-            
-            pageRects.push({
-              x: x * scaleX,
-              y: y * scaleY,
-              width: Math.max(width * scaleX, 10), // 最小宽度
-              height: height * scaleY,
-            });
+            const rects = calculateHighlightRects(page, matchingItems, scale, rotation);
+            pageRects.push(...rects);
             
             const preview = pageText.substring(
               Math.max(0, searchIndex - 20), 
@@ -568,72 +606,6 @@ export default function PDFViewer() {
 
   return (
     <div className="space-y-4" ref={containerRef}>
-      {/* 编辑工具栏 */}
-      {pdfInstance && (
-        <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">编辑工具：</span>
-            <button
-              onClick={() => {
-                setEditMode("select");
-                setPendingImage(null);
-              }}
-              className={`px-3 py-2 rounded-lg transition ${
-                editMode === "select"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600"
-              }`}
-            >
-              <MousePointer className="w-4 h-4 inline mr-1" />
-              选择
-            </button>
-            <label className="px-3 py-2 rounded-lg cursor-pointer transition bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600">
-              <Image className="w-4 h-4 inline mr-1" />
-              图像
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleImageUpload}
-              />
-            </label>
-            <button
-              onClick={() => setEditMode("text")}
-              className={`px-3 py-2 rounded-lg transition ${
-                editMode === "text"
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600"
-              }`}
-            >
-              <Type className="w-4 h-4 inline mr-1" />
-              文本框
-            </button>
-          </div>
-          {pendingImage && (
-            <div className="mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <img src={pendingImage} alt="预览" className="w-12 h-12 object-cover rounded" />
-                  <div>
-                    <p className="text-sm font-medium text-gray-800 dark:text-gray-200">点击PDF放置图像</p>
-                    <p className="text-xs text-gray-600 dark:text-gray-400">在PDF上点击任意位置放置图片</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => {
-                    setPendingImage(null);
-                    setEditMode("select");
-                  }}
-                  className="p-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       <div className="flex flex-wrap gap-3 items-center justify-between bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
         <label className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 transition">
           <Upload className="w-4 h-4" />
@@ -714,114 +686,21 @@ export default function PDFViewer() {
                 <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
               </div>
             )}
-            <div 
-              className="relative inline-block my-6"
-              style={{ cursor: editMode === "image" && pendingImage ? "crosshair" : "default" }}
-            >
+            <div className="relative inline-block my-6">
               <div className="relative">
                 <canvas 
                   ref={canvasRef} 
                   className="shadow-lg block mx-auto"
-                  onClick={(e) => {
-                    // 如果点击的是图片元素，不处理
-                    const target = e.target as HTMLElement;
-                    if (target.closest('.pdf-image-element') || target.closest('button')) {
-                      return;
-                    }
-
-                    // 检查是否在图片放置模式
-                    if (!pdfInstance || editMode !== "image" || !pendingImage) {
-                      return;
-                    }
-
-                    const clickedCanvas = e.currentTarget;
-                    const canvasRect = clickedCanvas.getBoundingClientRect();
-                    
-                    // 计算相对于canvas的坐标（图片是absolute定位，相对于relative父容器）
-                    const x = e.clientX - canvasRect.left;
-                    const y = e.clientY - canvasRect.top;
-                    
-                    console.log("Canvas点击位置:", { x, y, canvasRect, canvasWidth: clickedCanvas.width, canvasHeight: clickedCanvas.height });
-                    
-                    // 创建新图片对象
-                    const newImage: PlacedImage = {
-                      id: Date.now().toString(),
-                      page: currentPage,
-                      x: x - 75, // 默认宽度150，居中
-                      y: y - 75, // 默认高度150，居中
-                      width: 150,
-                      height: 150,
-                      imageData: pendingImage,
-                    };
-
-                    console.log("创建图片:", newImage);
-                    setPlacedImages(prev => [...prev, newImage]);
-                    setPendingImage(null);
-                    setEditMode("select");
-                    setSelectedImageId(newImage.id);
-                  }}
                 />
                 <canvas 
                   ref={highlightLayerRef} 
                   className="absolute top-0 left-0 pointer-events-none"
                   style={{ 
                     width: canvasRef.current?.width || 0,
-                    height: canvasRef.current?.height || 0
+                    height: canvasRef.current?.height || 0,
+                    imageRendering: "auto"
                   }}
                 />
-                
-                {/* 使用DOM元素显示图片，支持拖拽和调整大小 */}
-                {placedImages
-                  .filter(img => img.page === currentPage)
-                  .map((img) => (
-                    <div
-                      key={img.id}
-                      className={`pdf-image-element absolute border-2 ${
-                        selectedImageId === img.id 
-                          ? "border-blue-500" 
-                          : "border-transparent hover:border-gray-400"
-                      }`}
-                      style={{
-                        left: `${img.x}px`,
-                        top: `${img.y}px`,
-                        width: `${img.width}px`,
-                        height: `${img.height}px`,
-                        cursor: dragStart?.imageId === img.id ? "grabbing" : "move",
-                        userSelect: "none",
-                      }}
-                      onMouseDown={(e) => handleImageMouseDown(e, img.id)}
-                      onDragStart={(e) => e.preventDefault()}
-                    >
-                      <img
-                        src={img.imageData}
-                        alt="Placed"
-                        className="w-full h-full object-contain pointer-events-none"
-                        draggable={false}
-                      />
-                      {selectedImageId === img.id && (
-                        <>
-                          {/* 调整大小控制点 */}
-                          <div
-                            className="absolute -bottom-2 -right-2 w-4 h-4 bg-blue-500 rounded-full cursor-nwse-resize border-2 border-white"
-                            onMouseDown={(e) => {
-                              e.stopPropagation();
-                              handleResizeMouseDown(e, img.id);
-                            }}
-                          />
-                          {/* 删除按钮 */}
-                          <button
-                            className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center text-xs hover:bg-red-600"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteImage(img.id);
-                            }}
-                          >
-                            ×
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  ))}
               </div>
             </div>
           </>

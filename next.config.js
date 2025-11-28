@@ -23,6 +23,11 @@ const nextConfig = {
         tls: false,
       };
     }
+    // 支持Tesseract.js
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+    };
     return config;
   },
 }
