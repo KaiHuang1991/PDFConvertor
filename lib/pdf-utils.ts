@@ -1139,11 +1139,13 @@ export async function batchEditPDF(
               ? rgb(op.data.borderColor[0], op.data.borderColor[1], op.data.borderColor[2])
               : rgb(0, 0, 0);
             
+            // PDF坐标系是从左下角开始的，需要转换y坐标
             if (op.data.type === "rectangle") {
+              const pdfY = pageHeight - op.data.y - op.data.height;
               if (op.data.fill) {
                 page.drawRectangle({
                   x: op.data.x,
-                  y: op.data.y,
+                  y: pdfY,
                   width: op.data.width,
                   height: op.data.height,
                   color: shapeColor,
@@ -1153,7 +1155,7 @@ export async function batchEditPDF(
               if (op.data.borderWidth > 0) {
                 page.drawRectangle({
                   x: op.data.x,
-                  y: op.data.y,
+                  y: pdfY,
                   width: op.data.width,
                   height: op.data.height,
                   borderColor,
@@ -1162,10 +1164,12 @@ export async function batchEditPDF(
                 });
               }
             } else if (op.data.type === "circle") {
+              // 圆形：y坐标是圆心位置，需要转换
+              const pdfY = pageHeight - op.data.y;
               if (op.data.fill) {
                 page.drawCircle({
                   x: op.data.x,
-                  y: op.data.y,
+                  y: pdfY,
                   size: op.data.radius,
                   color: shapeColor,
                   opacity: op.data.opacity ?? 1.0,
@@ -1174,7 +1178,7 @@ export async function batchEditPDF(
               if (op.data.borderWidth > 0) {
                 page.drawCircle({
                   x: op.data.x,
-                  y: op.data.y,
+                  y: pdfY,
                   size: op.data.radius,
                   borderColor,
                   borderWidth: op.data.borderWidth || 1,
@@ -1182,9 +1186,12 @@ export async function batchEditPDF(
                 });
               }
             } else if (op.data.type === "line") {
+              // 直线：两个端点都需要转换y坐标
+              const pdfY1 = pageHeight - op.data.y;
+              const pdfY2 = pageHeight - op.data.y2;
               page.drawLine({
-                start: { x: op.data.x, y: op.data.y },
-                end: { x: op.data.x2, y: op.data.y2 },
+                start: { x: op.data.x, y: pdfY1 },
+                end: { x: op.data.x2, y: pdfY2 },
                 color: borderColor,
                 thickness: op.data.borderWidth || 1,
                 opacity: op.data.opacity ?? 1.0,
@@ -1198,27 +1205,42 @@ export async function batchEditPDF(
               ? rgb(op.data.color[0], op.data.color[1], op.data.color[2])
               : rgb(1, 1, 0);
             
+            // PDF坐标系是从左下角开始的，需要转换y坐标
+            // canvas坐标系：y从左上角向下
+            // PDF坐标系：y从左下角向上
+            // 转换公式：pdfY = pageHeight - canvasY - height（对于矩形）
+            // 或：pdfY = pageHeight - canvasY（对于点和线）
+            
             if (op.data.type === "highlight") {
+              // 高亮是矩形，需要转换y坐标和高度
+              const pdfY = pageHeight - op.data.y - op.data.height;
               page.drawRectangle({
                 x: op.data.x,
-                y: op.data.y,
+                y: pdfY,
                 width: op.data.width,
                 height: op.data.height,
                 color: annColor,
                 opacity: 0.3,
               });
             } else if (op.data.type === "underline" || op.data.type === "strikethrough") {
+              // 下划线和删除线是水平线，y坐标需要转换
+              const pdfY = pageHeight - op.data.y;
               page.drawLine({
-                start: { x: op.data.x, y: op.data.y },
-                end: { x: op.data.x + op.data.width, y: op.data.y },
+                start: { x: op.data.x, y: pdfY },
+                end: { x: op.data.x + op.data.width, y: pdfY },
                 color: annColor,
                 thickness: 2,
               });
             } else if (op.data.type === "textbox") {
+              // 文本框的y坐标需要转换（注意：文本的y坐标是基线位置，可能需要调整）
+              // 对于drawText，y坐标是文本基线的位置
+              // 如果canvas上的y是文本框顶部，需要加上字体大小来得到基线位置
+              const fontSize = op.data.fontSize || 12;
+              const pdfY = pageHeight - op.data.y - fontSize; // 假设canvas的y是文本框顶部
               page.drawText(op.data.text, {
                 x: op.data.x,
-                y: op.data.y,
-                size: op.data.fontSize || 12,
+                y: pdfY,
+                size: fontSize,
                 font,
                 color: annColor,
               });

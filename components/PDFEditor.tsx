@@ -229,8 +229,11 @@ export default function PDFEditor() {
   }, [dragState, resizeState, operations]);
 
   const loadPdfJs = async () => {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
     const pdfjsLib = await import("pdfjs-dist/build/pdf");
     if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
       pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
     }
@@ -1072,6 +1075,76 @@ export default function PDFEditor() {
           // 移除imageFile，只保留imageData（因为File对象无法序列化）
           if (data.imageFile) {
             delete data.imageFile;
+          }
+        } else if (op.type === "highlight" || op.type === "underline" || op.type === "textbox" || op.type === "rectangle" || op.type === "circle" || op.type === "line") {
+          // 对于注释和形状，也需要进行坐标转换
+          // 获取对应页面的scaleRatio和方向信息
+          const scaleRatio = scaleRatios.get(op.pageIndex) || 1.0;
+          const isContentLandscape = pageIsContentLandscape.get(op.pageIndex) || false;
+          
+          // 如果PDF内容是横向显示的，canvas已经旋转了90度
+          // 需要将canvas坐标转换回PDF原始坐标系统
+          let pdfX = data.x * scaleRatio;
+          let pdfY = data.y * scaleRatio;
+          let pdfWidth = (data.width || 0) * scaleRatio;
+          let pdfHeight = (data.height || 0) * scaleRatio;
+          
+          if (isContentLandscape) {
+            // 内容横向显示：canvas旋转了90度，需要转换坐标
+            const pageSize = pageOriginalSizes.get(op.pageIndex);
+            if (pageSize) {
+              const beforeX = pdfX;
+              const beforeY = pdfY;
+              
+              const canvasRotatedWidth = pageSize.height; // canvas旋转后，width = PDF的height
+              
+              const tempX = pdfX;
+              const tempY = pdfY;
+              
+              // 坐标转换：canvas旋转90度后，x和y轴交换了
+              pdfX = tempY; // canvas的y -> PDF的x
+              // canvas的x -> PDF的y（翻转）：使用canvas旋转后的宽度（即PDF的原始高度）来翻转
+              pdfY = canvasRotatedWidth - tempX - pdfWidth;
+              
+              // 对于形状和注释，宽高也需要交换（因为它们在PDF中应该保持与canvas上显示相同的方向）
+              // 但是，高亮、下划线等注释的宽高实际上不需要交换，因为它们只是矩形区域
+              // 只有坐标需要转换
+              
+              console.log(`横向PDF注释/形状坐标转换 (页面 ${op.pageIndex + 1}):`, {
+                类型: op.type,
+                转换前: { x: beforeX, y: beforeY, width: pdfWidth, height: pdfHeight },
+                转换后: { x: pdfX, y: pdfY, width: pdfWidth, height: pdfHeight },
+                canvas旋转后宽度: canvasRotatedWidth,
+                PDF原始尺寸: { width: pageSize.width, height: pageSize.height },
+                说明: "canvas旋转90度，坐标已转换回PDF原始坐标系"
+              });
+            }
+          }
+          
+          // 转换坐标到PDF原始尺寸（scale=1.0）
+          data.x = pdfX;
+          data.y = pdfY;
+          if (data.width !== undefined) data.width = pdfWidth;
+          if (data.height !== undefined) data.height = pdfHeight;
+          
+          // 对于line类型，还需要转换x2和y2
+          if (op.type === "line" && data.x2 !== undefined && data.y2 !== undefined) {
+            let pdfX2 = data.x2 * scaleRatio;
+            let pdfY2 = data.y2 * scaleRatio;
+            
+            if (isContentLandscape) {
+              const pageSize = pageOriginalSizes.get(op.pageIndex);
+              if (pageSize) {
+                const canvasRotatedWidth = pageSize.height;
+                const tempX2 = pdfX2;
+                const tempY2 = pdfY2;
+                pdfX2 = tempY2;
+                pdfY2 = canvasRotatedWidth - tempX2;
+              }
+            }
+            
+            data.x2 = pdfX2;
+            data.y2 = pdfY2;
           }
         }
           

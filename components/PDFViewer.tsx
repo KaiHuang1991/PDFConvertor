@@ -335,32 +335,81 @@ export default function PDFViewer() {
         };
       }
       
-      // 有旋转时，需要围绕页面中心旋转
-      // 首先转换为未旋转的canvas坐标
-      const unrotatedX = pdfX;
-      const unrotatedY = baseHeight - pdfY;
-      
-      // 页面中心点
-      const centerX = baseWidth / 2;
-      const centerY = baseHeight / 2;
-      
-      // 相对于中心点的坐标
-      const relX = unrotatedX - centerX;
-      const relY = unrotatedY - centerY;
-      
-      // 应用旋转（逆时针）
-      const radians = (currentRotation * Math.PI) / 180;
-      const rotatedX = relX * Math.cos(radians) - relY * Math.sin(radians);
-      const rotatedY = relX * Math.sin(radians) + relY * Math.cos(radians);
-      
-      // 旋转后的viewport中心点
-      const newCenterX = viewport.width / 2;
-      const newCenterY = viewport.height / 2;
-      
-      return {
-        x: newCenterX + rotatedX,
-        y: newCenterY + rotatedY
-      };
+      // 有旋转时，PDF坐标系原点始终在左下角
+      // 顺时针旋转90度后，新的坐标系仍然以左下角为原点
+      if (currentRotation === 90) {
+        // 顺时针旋转90度：
+        // 新的x坐标 = 未旋转时的y值（原来的y轴变成新的x轴）
+        // 新的y坐标 = PDF宽度 - 未旋转时的x值（原来的x轴变成新的y轴，但方向相反）
+        const newX = pdfY;
+        const newY = baseWidth - pdfX;
+        
+        // 转换为canvas坐标（canvas原点在左上角，y向下）
+        const rotatedViewport = page.getViewport({ scale: 1.0, rotation: currentRotation });
+        const scaleX = viewport.width / rotatedViewport.width;
+        const scaleY = viewport.height / rotatedViewport.height;
+        
+        return {
+          x: newX * scaleX,
+          y: (rotatedViewport.height - newY) * scaleY
+        };
+      } else if (currentRotation === 180) {
+        // 旋转180度：
+        // 新的x坐标 = PDF宽度 - 未旋转时的x值
+        // 新的y坐标 = PDF高度 - 未旋转时的y值
+        const newX = baseWidth - pdfX;
+        const newY = baseHeight - pdfY;
+        
+        const scaleX = viewport.width / baseWidth;
+        const scaleY = viewport.height / baseHeight;
+        
+        return {
+          x: newX * scaleX,
+          y: (baseHeight - newY) * scaleY
+        };
+      } else if (currentRotation === 270) {
+        // 顺时针旋转270度（或逆时针90度）：
+        // 新的x坐标 = PDF高度 - 未旋转时的y值
+        // 新的y坐标 = 未旋转时的x值
+        const newX = baseHeight - pdfY;
+        const newY = pdfX;
+        
+        const rotatedViewport = page.getViewport({ scale: 1.0, rotation: currentRotation });
+        const scaleX = viewport.width / rotatedViewport.width;
+        const scaleY = viewport.height / rotatedViewport.height;
+        
+        return {
+          x: newX * scaleX,
+          y: (rotatedViewport.height - newY) * scaleY
+        };
+      } else {
+        // 其他角度，使用围绕页面中心旋转的方法
+        // 首先转换为未旋转的canvas坐标
+        const unrotatedX = pdfX;
+        const unrotatedY = baseHeight - pdfY;
+        
+        // 页面中心点
+        const centerX = baseWidth / 2;
+        const centerY = baseHeight / 2;
+        
+        // 相对于中心点的坐标
+        const relX = unrotatedX - centerX;
+        const relY = unrotatedY - centerY;
+        
+        // 应用旋转（逆时针）
+        const radians = (currentRotation * Math.PI) / 180;
+        const rotatedX = relX * Math.cos(radians) - relY * Math.sin(radians);
+        const rotatedY = relX * Math.sin(radians) + relY * Math.cos(radians);
+        
+        // 旋转后的viewport中心点
+        const newCenterX = viewport.width / 2;
+        const newCenterY = viewport.height / 2;
+        
+        return {
+          x: newCenterX + rotatedX,
+          y: newCenterY + rotatedY
+        };
+      }
     };
     
     // 如果只有一个匹配项，直接计算
