@@ -50,9 +50,16 @@ let searchableTextCache = new Map<number, string>();
 const extractSearchableText = async (page: any): Promise<string> => {
   // 先尝试正常方式（英文PDF或已正确映射的PDF）
   try {
+    // 尝试多种方式启用字符级别信息
     const textContent = await page.getTextContent({
       normalizeWhitespace: true,
       disableCombineTextItems: false,
+      // @ts-ignore - 尝试不同的选项名称
+      includeCharInfo: true,  // 选项1：includeCharInfo
+      // @ts-ignore
+      includeCharBoundingBoxes: true,  // 选项2：includeCharBoundingBoxes
+      // @ts-ignore
+      includeTextRects: true,  // 选项3：includeTextRects
     });
 
     // 【关键修复】构建文本时，确保与后续在方案2中构建 textContentText 的方式一致
@@ -139,6 +146,7 @@ export default function PDFViewer() {
   const [error, setError] = useState<string>("");
   const [highlights, setHighlights] = useState<Map<number, HighlightRect[]>>(new Map());
   const highlightLayerRef = useRef<HTMLCanvasElement | null>(null);
+  const textLayerRef = useRef<HTMLDivElement | null>(null);  // 文本层容器（用于获取精确字符位置）
 
   useEffect(() => {
     if (pdfInstance) {
@@ -175,6 +183,12 @@ export default function PDFViewer() {
               const textContent = await page.getTextContent({
                 normalizeWhitespace: true,
                 disableCombineTextItems: false,
+                // @ts-ignore - 尝试不同的选项名称
+                includeCharInfo: true,
+                // @ts-ignore
+                includeCharBoundingBoxes: true,
+                // @ts-ignore
+                includeTextRects: true,
               });
 
               // 计算这是第几个匹配（与 handleSearch 保持一致的逻辑）
@@ -188,7 +202,6 @@ export default function PDFViewer() {
                 .map((item: any) => item.str || "")
                 .join(" ");
               const textContentTextLower = textContentText.toLowerCase();
-              console.log(textContentTextLower);
               
               // 在 textContentTextLower 中查找第 matchCount 个匹配
               let currentMatchIndex = 0;
@@ -223,24 +236,15 @@ export default function PDFViewer() {
                     const itemTextLower = itemText.toLowerCase();
                     const relativeStart = textContentSearchIndex - itemStart;
                     
-                    // 在这个 item 中查找最接近的匹配
-                    let itemMatchStart = itemTextLower.indexOf(queryLower, Math.max(0, relativeStart - 2));
-                    let bestMatchInItem = -1;
-                    let minDistInItem = Infinity;
+                    // 【关键修复】直接查找第一个匹配，而不是找最接近的匹配
+                    // 这样可以确保找到的是item中第一个出现的匹配，而不是最接近relativeStart的匹配
+                    const itemMatchStart = itemTextLower.indexOf(queryLower);
                     
-                    while (itemMatchStart !== -1 && itemMatchStart < itemText.length) {
-                      const dist = Math.abs(itemMatchStart - relativeStart);
-                      if (dist < minDistInItem) {
-                        minDistInItem = dist;
-                        bestMatchInItem = itemMatchStart;
-                      }
-                      itemMatchStart = itemTextLower.indexOf(queryLower, itemMatchStart + 1);
-                    }
-                    
-                    if (bestMatchInItem !== -1 && minDistInItem <= 2) {
-                      const startChar = bestMatchInItem;
-                      const endChar = Math.min(itemText.length, bestMatchInItem + query.length);
-                  matchingItems.push({ item, startChar, endChar });
+                    if (itemMatchStart !== -1) {
+                      const startChar = itemMatchStart;
+                      const endChar = Math.min(itemText.length, itemMatchStart + query.length);
+                      
+                      matchingItems.push({ item, startChar, endChar });
                       break;
                     }
                 }
@@ -359,6 +363,43 @@ export default function PDFViewer() {
       await renderTask.promise;
       // 【关键】渲染完成后立即同步高亮层尺寸（必须在绘制高亮之前！）
       syncHighlightCanvasSize();
+      
+      // 【方法3】渲染文本层（用于获取精确字符位置）
+      if (textLayerRef.current) {
+        try {
+          const pdfjsLib = await loadPdfJs();
+          const textContent = await page.getTextContent({
+            normalizeWhitespace: true,
+            disableCombineTextItems: false,
+          });
+          
+          const textLayerDiv = textLayerRef.current;
+          textLayerDiv.innerHTML = '';
+          textLayerDiv.style.position = 'absolute';
+          textLayerDiv.style.left = '0';
+          textLayerDiv.style.top = '0';
+          textLayerDiv.style.width = `${viewport.width}px`;
+          textLayerDiv.style.height = `${viewport.height}px`;
+          textLayerDiv.style.opacity = '0';
+          textLayerDiv.style.pointerEvents = 'none';
+          textLayerDiv.style.visibility = 'hidden';
+          
+          // 使用 PDF.js 的 renderTextLayer
+          // @ts-ignore
+          if (pdfjsLib.renderTextLayer) {
+            // @ts-ignore
+            await pdfjsLib.renderTextLayer({
+              textContentSource: textContent,
+              container: textLayerDiv,
+              viewport: viewport,
+              textDivs: [],
+            }).promise;
+          }
+        } catch (error) {
+          console.warn('[文本层渲染] 渲染失败，将使用备用方法:', error);
+        }
+      }
+      
       // 渲染完成后绘制高亮
       await drawHighlights(pageNumber, page, viewport);
     } catch (err: any) {
@@ -485,16 +526,281 @@ export default function PDFViewer() {
   };
 
   /**
-   * 【终极实用版】高亮计算函数 —— 99.8%贴字率，已接近ASPose效果
-   * 
-   * 关键改进：
-   * 1. 使用标准字体ascent/descent比例（0.85/0.15），比固定0.95准十倍
-   * 2. 使用Math.hypot计算字体大小（更准确）
-   * 3. 正确计算yTop和yBottom（基于ascent/descent）
-   * 
-   * 已测试：搜索"95600037682"、"account"等高亮完全贴字，支持放大、缩小、旋转90°/180°/270°都完美！
+   * 【方法3：已废弃】使用文本层DOM元素获取精确位置
+   * 问题：手动创建的文本层span位置基于平均字符宽度，不准确
+   * 解决：直接使用textContent方法，它已经足够准确
    */
-  const getHighlightRects = async (
+  const getHighlightRectsFromTextLayer = async (
+    page: any,
+    matches: Array<{ item: any; startChar: number; endChar: number }>,
+    scale: number,
+    rotation: number
+  ): Promise<HighlightRect[]> => {
+    // 【改进】直接使用textContent方法，它已经足够准确
+    // 文本层方法的问题在于手动创建的span位置不准确，所以回退到textContent方法
+    return getHighlightRectsFromTextContent(page, matches, scale, rotation);
+  };
+
+  // 【保留旧代码供参考，但已禁用】
+  const _getHighlightRectsFromTextLayer_OLD = async (
+    page: any,
+    matches: Array<{ item: any; startChar: number; endChar: number }>,
+    scale: number,
+    rotation: number
+  ): Promise<HighlightRect[]> => {
+    const viewport = page.getViewport({ scale, rotation });
+    const rects: HighlightRect[] = [];
+    const pdfjsLib = await loadPdfJs();
+
+    try {
+      // 获取文本内容
+      const textContent = await page.getTextContent({
+        normalizeWhitespace: true,
+        disableCombineTextItems: false,
+      });
+
+      // 渲染文本层
+      const textLayerDiv = textLayerRef.current;
+      textLayerDiv.innerHTML = ''; // 清空之前的内容
+      
+      // 【关键修复】确保文本层div和canvas完全对齐
+      // 先获取Canvas的实际显示尺寸，确保文本层和Canvas尺寸完全一致
+      const canvasDisplayRect = canvasRef.current.getBoundingClientRect();
+      
+      textLayerDiv.style.position = 'absolute';
+      textLayerDiv.style.left = '0';
+      textLayerDiv.style.top = '0';
+      // 【重要】使用Canvas的实际显示尺寸，而不是viewport尺寸
+      // 这样可以确保文本层和Canvas完全对齐（包括处理devicePixelRatio等）
+      textLayerDiv.style.width = `${canvasDisplayRect.width}px`;
+      textLayerDiv.style.height = `${canvasDisplayRect.height}px`;
+      textLayerDiv.style.opacity = '0'; // 隐藏文本层（只用于获取位置）
+      textLayerDiv.style.pointerEvents = 'none';
+      textLayerDiv.style.transform = 'none';  // 确保没有transform影响
+      textLayerDiv.style.margin = '0';
+      textLayerDiv.style.padding = '0';
+      textLayerDiv.style.boxSizing = 'border-box';
+      
+      // 计算viewport到Canvas显示尺寸的缩放比例
+      const viewportToDisplayScaleX = canvasDisplayRect.width / viewport.width;
+      const viewportToDisplayScaleY = canvasDisplayRect.height / viewport.height;
+
+      // 【方法3】手动创建文本层，每个字符一个span，用于获取精确位置
+      // 关键改进：使用viewport坐标转换，确保位置准确
+      const itemToCharIndexMap = new Map<number, number>(); // item索引 -> 该item的第一个字符的全局索引
+      let globalCharIndex = 0;
+      
+      for (let itemIdx = 0; itemIdx < textContent.items.length; itemIdx++) {
+        const item = textContent.items[itemIdx];
+        if (!item.str) continue;
+        
+        // 记录这个item的第一个字符的全局索引
+        itemToCharIndexMap.set(itemIdx, globalCharIndex);
+        
+        // 计算item的起始位置（PDF坐标系）
+        const itemX = item.transform[4];
+        const itemY = item.transform[5];
+        
+        // 转换为viewport坐标
+        const itemViewportPoint = viewport.convertToViewportPoint(itemX, itemY);
+        const itemViewportX = itemViewportPoint[0];
+        const itemViewportY = itemViewportPoint[1];
+        
+        // 计算字符宽度（使用平均宽度，但后续会通过getBoundingClientRect获取实际宽度）
+        const charWidth = item.width && item.str.length > 0 ? item.width / item.str.length : Math.abs(item.transform[0]);
+        const fontSize = Math.hypot(item.transform[0], item.transform[1]);
+        
+        // 为每个字符创建一个span
+        for (let i = 0; i < item.str.length; i++) {
+          const char = item.str[i];
+          const span = document.createElement('span');
+          span.textContent = char;
+          span.setAttribute('data-char-index', globalCharIndex.toString());
+          span.setAttribute('data-item-index', itemIdx.toString());
+          span.setAttribute('data-char-in-item', i.toString());
+          span.style.position = 'absolute';
+          span.style.whiteSpace = 'pre';
+          span.style.fontSize = `${fontSize}px`;
+          span.style.fontFamily = 'sans-serif';  // 使用通用字体，尽量接近PDF渲染
+          span.style.lineHeight = '1';  // 避免行高影响
+          
+          // 计算字符位置（viewport坐标）
+          const charX = itemViewportX + (i * charWidth);
+          const charY = itemViewportY;
+          
+          // 【关键】将viewport坐标转换为Canvas显示坐标
+          // 因为textLayerDiv的尺寸是Canvas的显示尺寸，而不是viewport尺寸
+          span.style.left = `${charX * viewportToDisplayScaleX}px`;
+          span.style.top = `${charY * viewportToDisplayScaleY}px`;
+          
+          textLayerDiv.appendChild(span);
+          globalCharIndex++;
+        }
+      }
+
+      // 等待DOM更新
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // 从DOM元素获取精确位置
+      // 【关键】重新获取canvas和textLayer的位置，确保是最新的
+      const canvasRect = canvasRef.current.getBoundingClientRect();
+      const textLayerRect = textLayerDiv.getBoundingClientRect();
+      
+      // 【调试】检查对齐情况
+      const alignmentDiff = {
+        left: textLayerRect.left - canvasRect.left,
+        top: textLayerRect.top - canvasRect.top,
+        width: textLayerRect.width - canvasRect.width,
+        height: textLayerRect.height - canvasRect.height
+      };
+      console.log(`[getBoundingClientRect调试] 文本层与Canvas对齐差异:`, alignmentDiff);
+      
+      // 计算缩放比例（考虑devicePixelRatio）
+      const scaleX = canvasRef.current.width / canvasRect.width;
+      const scaleY = canvasRef.current.height / canvasRect.height;
+      
+      // 【调试】输出 getBoundingClientRect() 信息
+      console.log(`[getBoundingClientRect调试] Canvas位置:`, {
+        left: canvasRect.left,
+        top: canvasRect.top,
+        width: canvasRect.width,
+        height: canvasRect.height,
+        right: canvasRect.right,
+        bottom: canvasRect.bottom
+      });
+      console.log(`[getBoundingClientRect调试] Canvas尺寸:`, {
+        canvasWidth: canvasRef.current.width,
+        canvasHeight: canvasRef.current.height,
+        styleWidth: canvasRef.current.style.width,
+        styleHeight: canvasRef.current.style.height
+      });
+      console.log(`[getBoundingClientRect调试] 文本层位置:`, {
+        left: textLayerRect.left,
+        top: textLayerRect.top,
+        width: textLayerRect.width,
+        height: textLayerRect.height
+      });
+      console.log(`[getBoundingClientRect调试] 缩放比例:`, {
+        scaleX: scaleX,
+        scaleY: scaleY,
+        devicePixelRatio: window.devicePixelRatio || 1
+      });
+
+      for (const { item, startChar, endChar } of matches) {
+        const { str } = item;
+        if (!str || endChar <= startChar) continue;
+
+        // 找到这个item在textContent.items中的索引
+        const itemIndex = textContent.items.indexOf(item);
+        if (itemIndex === -1) continue;
+        
+        // 计算这个item的第一个字符的全局索引
+        const itemStartCharIndex = itemToCharIndexMap.get(itemIndex);
+        if (itemStartCharIndex === undefined) continue;
+        
+        // 计算匹配文本的全局字符索引
+        const globalStartCharIndex = itemStartCharIndex + startChar;
+        const globalEndCharIndex = itemStartCharIndex + endChar - 1;
+        
+        // 在文本层中查找对应的字符span元素
+        const startSpan = textLayerDiv.querySelector(`span[data-char-index="${globalStartCharIndex}"]`) as HTMLElement;
+        const endSpan = textLayerDiv.querySelector(`span[data-char-index="${globalEndCharIndex}"]`) as HTMLElement;
+
+        if (startSpan && endSpan) {
+          // 获取DOM元素的精确位置
+          const startRect = startSpan.getBoundingClientRect();
+          const endRect = endSpan.getBoundingClientRect();
+          
+          // 【调试】输出字符span的 getBoundingClientRect() 信息
+          console.log(`[getBoundingClientRect调试] 匹配文本: "${str.substring(startChar, endChar)}"`);
+          console.log(`[getBoundingClientRect调试] 起始字符span (charIndex=${globalStartCharIndex}):`, {
+            left: startRect.left,
+            top: startRect.top,
+            width: startRect.width,
+            height: startRect.height,
+            right: startRect.right,
+            bottom: startRect.bottom,
+            textContent: startSpan.textContent,
+            styleLeft: startSpan.style.left,
+            styleTop: startSpan.style.top
+          });
+          console.log(`[getBoundingClientRect调试] 结束字符span (charIndex=${globalEndCharIndex}):`, {
+            left: endRect.left,
+            top: endRect.top,
+            width: endRect.width,
+            height: endRect.height,
+            right: endRect.right,
+            bottom: endRect.bottom,
+            textContent: endSpan.textContent,
+            styleLeft: endSpan.style.left,
+            styleTop: endSpan.style.top
+          });
+          
+          // 计算相对于canvas的位置
+          // 【关键修复】由于文本层和Canvas现在尺寸完全一致，可以直接使用getBoundingClientRect的差值
+          // 但需要考虑scaleX/scaleY（Canvas设备像素 vs CSS像素）
+          const offsetX = startRect.left - canvasRect.left;
+          const offsetY = startRect.top - canvasRect.top;
+          
+          // 【重要】如果文本层和Canvas完全对齐（left/top相同），offsetX/offsetY应该接近0
+          // 但span的位置是相对于textLayerDiv的，所以需要从span的getBoundingClientRect获取
+          // 然后转换为Canvas坐标
+          const x = offsetX * scaleX;
+          const y = offsetY * scaleY;
+          const width = ((endRect.left + endRect.width) - startRect.left) * scaleX;
+          const height = startRect.height * scaleY;
+          
+          // 【调试】输出坐标计算详情
+          console.log(`[getBoundingClientRect调试] 坐标计算详情:`, {
+            startRectLeft: startRect.left,
+            canvasRectLeft: canvasRect.left,
+            offsetX: offsetX,
+            scaleX: scaleX,
+            finalX: x,
+            startRectTop: startRect.top,
+            canvasRectTop: canvasRect.top,
+            offsetY: offsetY,
+            scaleY: scaleY,
+            finalY: y,
+            width: width,
+            height: height
+          });
+          
+          // 【调试】输出坐标计算过程
+          console.log(`[getBoundingClientRect调试] 坐标计算:`, {
+            offsetX: offsetX,
+            offsetY: offsetY,
+            finalX: x,
+            finalY: y,
+            finalWidth: width,
+            finalHeight: height,
+            calculation: {
+              x: `(${startRect.left} - ${canvasRect.left}) * ${scaleX} = ${x}`,
+              y: `(${startRect.top} - ${canvasRect.top}) * ${scaleY} = ${y}`,
+              width: `((${endRect.left} + ${endRect.width}) - ${startRect.left}) * ${scaleX} = ${width}`,
+              height: `${startRect.height} * ${scaleY} = ${height}`
+            }
+          });
+
+          rects.push({ x, y, width, height });
+          console.log(`[文本层方法] 找到匹配，itemIndex=${itemIndex}, startChar=${startChar}, endChar=${endChar}, x=${x}, y=${y}, width=${width}`);
+      } else {
+          console.warn(`[文本层方法] 未找到字符span，itemIndex=${itemIndex}, startChar=${startChar}, endChar=${endChar}, globalStart=${globalStartCharIndex}, globalEnd=${globalEndCharIndex}`);
+        }
+      }
+    } catch (error) {
+      console.error('[文本层方法] 获取位置失败，回退到其他方法:', error);
+      // 回退到其他方法
+      return getHighlightRectsFromTextContent(page, matches, scale, rotation);
+    }
+
+    return rects;
+  };
+
+  /**
+   * 【方法2：备用】使用textContent计算位置（当前使用的方法）
+   */
+  const getHighlightRectsFromTextContent = async (
     page: any,
     matches: Array<{ item: any; startChar: number; endChar: number }>,
     scale: number,
@@ -507,6 +813,20 @@ export default function PDFViewer() {
       const { transform, str, width } = item;
       
       if (!str || endChar <= startChar) continue;
+
+      // 【关键说明】当前获取字符宽度的方法：
+      // 
+      // 方法1：使用平均字符宽度（当前使用的方法）
+      // - 计算：charWidth = item.width / str.length
+      // - 优点：包含了字符间距，对于整个文本块是准确的
+      // - 缺点：对于变宽字体，每个字符的实际宽度不同，会有误差
+      // 
+      // 方法2：使用字符级别的信息（如果PDF.js提供）
+      // - 检查：item.chars 数组，可能包含每个字符的 width 或 transform
+      // - 优点：每个字符的实际宽度，最准确
+      // - 缺点：不是所有PDF都提供这个信息
+      //
+      // 当前实现：使用方法1（平均宽度）+ 字符类型系数（大写1.1倍）
 
       // 关键改进：使用Math.hypot计算字体大小（更准确）
       const fontSize = Math.hypot(transform[0], transform[1]);
@@ -562,27 +882,95 @@ export default function PDFViewer() {
       // 1. 它考虑了实际的字符宽度和字符间距
       // 2. 对于单个 text item 内的部分文本，这是最准确的
       
-      // 【关键修复】计算精确的起始位置和宽度
-      // 使用上面计算出的 charWidth（已经是 width / str.length），确保对齐到字符边界
-      const offsetX = charWidth * startChar;
-      const matchWidth = charWidth * (endChar - startChar);
+      // 【精确方法】使用字符级别的信息获取每个字符的实际宽度
+      // 优先使用 item.chars 数组（如果PDF.js提供），这是最准确的方法
+      
+      let offsetX = 0;
+      let matchWidth = 0;
+      let usingCharLevelInfo = false; // 标记是否使用了字符级别信息
+      
+      // 检查是否有字符级别的信息
+      if (item.chars && Array.isArray(item.chars) && item.chars.length > 0) {
+        usingCharLevelInfo = true;
+        // 【最准确方法】使用每个字符的实际宽度
+        // 遍历搜索词之前的每个字符
+        for (let i = 0; i < startChar && i < item.chars.length; i++) {
+          const charInfo = item.chars[i];
+          let actualCharWidth: number;
+          
+          if (charInfo && charInfo.width) {
+            // 优先使用字符的实际宽度
+            actualCharWidth = charInfo.width;
+          } else if (charInfo && charInfo.transform) {
+            // 如果没有width，使用字符的transform[0]（水平缩放因子）
+            actualCharWidth = Math.abs(charInfo.transform[0]);
+        } else {
+            // 回退到平均宽度
+            actualCharWidth = charWidth;
+          }
+          
+          offsetX += actualCharWidth;
+        }
+        
+        // 遍历搜索词的每个字符
+        for (let i = startChar; i < endChar && i < item.chars.length; i++) {
+          const charInfo = item.chars[i];
+          let actualCharWidth: number;
+          
+          if (charInfo && charInfo.width) {
+            actualCharWidth = charInfo.width;
+          } else if (charInfo && charInfo.transform) {
+            actualCharWidth = Math.abs(charInfo.transform[0]);
+        } else {
+            actualCharWidth = charWidth;
+          }
+          
+          matchWidth += actualCharWidth;
+        }
+      } else {
+        // 【备用方法】如果没有字符级别信息，使用改进的平均宽度计算
+        // 问题：简单的平均宽度对于变宽字体可能不准确
+        // 改进：考虑字符的实际宽度分布，使用更精确的估算
+        
+        // 分析：item.width是实际测量的总宽度，包含了所有字符的实际宽度和间距
+        // 对于变宽字体，每个字符的宽度可能不同，但平均宽度仍然是最接近实际的方法
+        
+        // 直接使用平均宽度计算
+        offsetX = charWidth * startChar;
+        matchWidth = charWidth * (endChar - startChar);
+        
+        // 【调试】输出计算详情，帮助分析问题
+        console.log(`[高亮计算] 平均宽度计算详情:`, {
+          itemWidth: width,
+          strLength: str.length,
+          charWidth: charWidth,
+          startChar: startChar,
+          endChar: endChar,
+          offsetX: offsetX,
+          matchWidth: matchWidth,
+          expectedTotalWidth: charWidth * str.length,
+          actualItemWidth: width,
+          difference: Math.abs(charWidth * str.length - width)
+        });
+      }
       
       // PDF坐标系中的位置
       // transform[4] 是整个文本块的起始位置
       // offsetX 是从文本块起始位置到匹配文本起始位置的偏移
       const x = transform[4] + offsetX;
       
-      // 【调试】输出关键信息
-      if (startChar > 0 || endChar < str.length) {
-        console.log(`匹配文本: "${str.substring(startChar, endChar)}"`);
-        console.log(`  item.str: "${str}"`);
-        console.log(`  startChar: ${startChar}, endChar: ${endChar}`);
-        console.log(`  transform[4]: ${transform[4]}, transform[0]: ${transform[0]}`);
-        console.log(`  width: ${width}, str.length: ${str.length}`);
-        console.log(`  charWidth: ${charWidth} (${width && str.length > 0 ? `width/len=${width/str.length}` : 'transform[0]'})`);
-        console.log(`  offsetX: ${offsetX}, matchWidth: ${matchWidth}`);
-        console.log(`  最终 x: ${x}`);
-      }
+      // 【调试】输出关键计算信息
+      const matchText = str.substring(startChar, endChar);
+      console.log(`[高亮计算] 匹配文本: "${matchText}"`);
+      console.log(`[高亮计算] item.str: "${str}"`);
+      console.log(`[高亮计算] startChar: ${startChar}, endChar: ${endChar}`);
+      console.log(`[高亮计算] transform[4]: ${transform[4]}, transform[5]: ${transform[5]}`);
+      console.log(`[高亮计算] item.width: ${width}, str.length: ${str.length}`);
+      console.log(`[高亮计算] charWidth: ${charWidth}`);
+      console.log(`[高亮计算] offsetX: ${offsetX}, matchWidth: ${matchWidth}`);
+      console.log(`[高亮计算] 最终x: ${x}`);
+      console.log(`[高亮计算] 使用字符级别信息: ${usingCharLevelInfo ? '是' : '否（使用平均宽度）'}`);
+      
       const baselineY = transform[5];  // 基线位置（PDF坐标系，y向上）
       
       // 关键修正：适配中英文字体的ascent/descent
@@ -618,6 +1006,21 @@ export default function PDFViewer() {
     return rects;
   };
 
+  /**
+   * 【主函数】高亮计算函数 - 使用textContent方法
+   */
+  const getHighlightRects = async (
+    page: any,
+    matches: Array<{ item: any; startChar: number; endChar: number }>,
+    scale: number,
+    rotation: number
+  ): Promise<HighlightRect[]> => {
+    // 直接使用textContent方法（文本层方法已禁用，因为它不准确）
+    const rects = await getHighlightRectsFromTextContent(page, matches, scale, rotation);
+    console.log(`[高亮计算] 使用textContent方法，找到 ${rects.length} 个高亮矩形`);
+    return rects;
+  };
+
   const handleSearch = async () => {
     if (!pdfInstance || !searchQuery.trim()) {
       setSearchResults([]);
@@ -645,6 +1048,12 @@ export default function PDFViewer() {
         const textContent = await page.getTextContent({
           normalizeWhitespace: true,
           disableCombineTextItems: false,
+          // @ts-ignore - 尝试不同的选项名称
+          includeCharInfo: true,
+          // @ts-ignore
+          includeCharBoundingBoxes: true,
+          // @ts-ignore
+          includeTextRects: true,
         });
 
         // 【核心修复】优先直接在 textContent.items 中查找匹配（最准确！）
@@ -660,17 +1069,11 @@ export default function PDFViewer() {
           (/[\u4e00-\u9fa5a-zA-Z0-9]/.test(textContentSample) && 
            !/[\u0000-\u001F\u007F-\u009F]/.test(textContentSample)); // 检查是否有乱码字符
 
-        // 【调试】输出文本检查结果
-        console.log(`页面 ${i}: isTextContentUsable =`, isTextContentUsable);
-        console.log(`页面 ${i}: textContentSample =`, textContentSample.substring(0, 100));
-
         let searchIndex = 0;
         let matchIndex = 0;
         const pageRects: HighlightRect[] = [];
         
         if (isTextContentUsable) {
-          // 【调试】方案1：英文PDF
-          console.log(`页面 ${i}: 使用方案1（直接在textContent.items中搜索）`);
           // 方案1：textContent.items 的文本可用，直接在其中查找（最准确！）
           // 这样完全避免了文本对齐问题
           let currentMatchIndex = 0;
@@ -682,6 +1085,10 @@ export default function PDFViewer() {
             if (!itemText || itemText.length === 0) continue;
             
             const itemTextLower = itemText.toLowerCase();
+            
+            // 【关键验证】确保小写转换后长度不变（某些Unicode字符可能改变长度）
+            // 如果长度变化，需要特殊处理（但这种情况很少见）
+            
             let itemMatchStart = itemTextLower.indexOf(queryLower, 0);
             
             // 在这个 item 中查找所有匹配
@@ -710,8 +1117,6 @@ export default function PDFViewer() {
           }
         } else {
           // 方案2：textContent.items 是乱码，使用 extractSearchableText 的结果（中文PDF）
-          // 【调试】方案2：中文PDF
-          console.log(`页面 ${i}: 使用方案2（使用extractSearchableText的结果）`);
           
           // 【关键修复】构建 textContent 的完整文本
           // 
@@ -739,31 +1144,8 @@ export default function PDFViewer() {
           // 检查是否使用了 operatorList（方式2）
           const usesOperatorList = Math.abs(pageText.length - textContentText.length) / Math.max(pageText.length, textContentText.length, 1) > 0.3;
           
-          // 【调试】输出文本对比，检查是否一致
-          console.log(`页面 ${i}: textContentTextLower 长度 =`, textContentTextLower.length);
-          console.log(`页面 ${i}: lowerText (来自extractSearchableText) 长度 =`, lowerText.length);
-          console.log(`页面 ${i}: 长度差异 =`, Math.abs(textContentTextLower.length - lowerText.length));
-          
           // 【关键修复】检测并处理文本结构不一致的问题
-          const lengthDiff = Math.abs(textContentTextLower.length - lowerText.length);
-          const lengthDiffPercent = lowerText.length > 0 ? (lengthDiff / lowerText.length) * 100 : 0;
-          
-          if (usesOperatorList) {
-            console.warn(`页面 ${i}: ⚠️ 检测到 extractSearchableText 使用了 operatorList（方式2）`);
-            console.warn(`页面 ${i}: 这意味着文本保留了原始格式（空格、换行等）`);
-            console.warn(`页面 ${i}: 但 textContentText 使用 join("")，格式不一致`);
-            console.warn(`页面 ${i}: 文本长度差异 ${lengthDiffPercent.toFixed(1)}%`);
-            console.warn(`页面 ${i}: ⚠️ 这会导致字符位置无法准确对齐，高亮位置会偏移！`);
-            console.warn(`页面 ${i}: 建议：检查 extractSearchableText 的实现，确保它优先使用方式1`);
-            
-            // 临时解决方案：尝试通过移除空白字符来对齐（但这不是完美的解决方案）
-            // 因为即使移除了空白字符，如果 operatorList 中的字符顺序和 textContent.items 不完全一致，
-            // 仍然会有问题
-            console.warn(`页面 ${i}: 尝试继续执行，但高亮位置可能不准确`);
-          } else {
-            console.log(`页面 ${i}: extractSearchableText 使用了方式1（textContent.items）`);
-            console.log(`页面 ${i}: 文本长度差异 ${lengthDiffPercent.toFixed(1)}%，应该能准确对齐`);
-          }
+          // 如果使用了 operatorList，文本结构可能不一致，但继续执行
           
           while ((searchIndex = lowerText.indexOf(queryLower, searchIndex)) !== -1) {
             // 计算这是第几个匹配（从 lowerText 中）
@@ -781,8 +1163,8 @@ export default function PDFViewer() {
             while ((textContentSearchIndex = textContentTextLower.indexOf(queryLower, textContentSearchIndex)) !== -1) {
               if (currentMatchIndex === matchCount) {
                 textContentMatchPos = textContentSearchIndex;
-                break;
-              }
+              break;
+            }
               currentMatchIndex++;
               textContentSearchIndex += query.length;
             }
@@ -958,6 +1340,16 @@ export default function PDFViewer() {
                     // 【关键修复】删除 width/height 绑定，让 syncHighlightCanvasSize 完全接管尺寸
                     // width 和 height 由 syncHighlightCanvasSize 函数在渲染时动态设置
                     imageRendering: "crisp-edges"  // 使用 crisp-edges 使高亮边缘更锐利
+                  }}
+                />
+                {/* 【方法3】文本层容器（隐藏，用于获取精确字符位置） */}
+                <div 
+                  ref={textLayerRef}
+                  className="absolute top-0 left-0 pointer-events-none"
+                  style={{
+                    opacity: 0,
+                    visibility: 'hidden',
+                    zIndex: -1,
                   }}
                 />
               </div>

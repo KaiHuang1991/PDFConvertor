@@ -1,6 +1,7 @@
-import { createWorker } from "tesseract.js";
-import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } from "docx";
-import { saveAs } from "file-saver";
+// 使用动态导入以避免 Next.js 构建问题
+// import { createWorker } from "tesseract.js";
+// import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } from "docx";
+// import { saveAs } from "file-saver";
 
 /**
  * OCR识别结果
@@ -21,6 +22,7 @@ export interface WordInfo {
   text: string;
   bbox: { x0: number; y0: number; x1: number; y1: number };
   confidence: number;
+  fontSize?: number; // 字体大小（从bbox高度推断）
 }
 
 /**
@@ -30,6 +32,10 @@ export interface LineInfo {
   text: string;
   words: WordInfo[];
   bbox: { x0: number; y0: number; x1: number; y1: number };
+  fontSize?: number; // 字体大小（从bbox高度推断）
+  isTitle?: boolean; // 是否为标题（通过字体大小和位置判断）
+  isSubtitle?: boolean; // 是否为副标题
+  alignment?: "left" | "center" | "right"; // 对齐方式
 }
 
 /**
@@ -169,6 +175,8 @@ export async function recognizeImage(
 
     // 创建Tesseract worker，使用优化的参数（简体中文+英文）
     // 使用chi_sim（简体中文）和eng（英文）的组合
+    // 动态导入 tesseract.js
+    const { createWorker } = await import("tesseract.js");
     const worker = await createWorker("chi_sim+eng", 1, {
       logger: (m) => {
         if (m.status === "recognizing text") {
@@ -180,16 +188,13 @@ export async function recognizeImage(
     });
 
     // 设置Tesseract参数以提高中文识别准确度并保持布局
+    // 注意：tessedit_ocr_engine_mode 只能在 createWorker 时设置，不能在这里设置
     await worker.setParameters({
       tessedit_pageseg_mode: "1", // 自动页面分割（带OSD），保持布局
-      tessedit_char_whitelist: "", // 不限制字符
       preserve_interword_spaces: "1", // 保留单词间空格
-      classify_bln_numeric_mode: "0", // 不强制数字模式
-      tessedit_ocr_engine_mode: "1", // LSTM OCR引擎（对中文更好）
       // 中文识别优化参数
       language_model_penalty_non_freq_dict_word: "0.1", // 降低非字典词惩罚
       language_model_penalty_non_dict_word: "0.15", // 降低非字典词惩罚
-      tessedit_create_hocr: "0", // 不使用hOCR（使用默认输出保持布局）
       // 保持布局的参数
       preserve_blk_reflow: "1", // 保持块重排
     });
@@ -204,19 +209,28 @@ export async function recognizeImage(
     let lines: LineInfo[] | undefined;
     let blocks: BlockInfo[] | undefined;
 
-    // 始终提取结构化数据以保持布局
+    // 始终提取结构化数据以保持布局和格式
     if (data.words && data.words.length > 0) {
-      words = data.words.map((w: any) => ({
-        text: w.text,
-        bbox: w.bbox,
-        confidence: w.confidence || 0,
-      }));
+      // 计算平均字体大小（用于识别标题等）
+      const avgFontSize = data.words.reduce((sum: number, w: any) => {
+        return sum + (w.bbox.y1 - w.bbox.y0);
+      }, 0) / data.words.length;
+      
+      words = data.words.map((w: any) => {
+        const fontSize = w.bbox.y1 - w.bbox.y0; // 从bbox高度推断字体大小
+        return {
+          text: w.text,
+          bbox: w.bbox,
+          confidence: w.confidence || 0,
+          fontSize: fontSize,
+        };
+      });
 
-      // 按行分组（保持布局）
+      // 按行分组（保持布局，使用更精确的容差以保留格式）
       const lineMap = new Map<number, WordInfo[]>();
       data.words.forEach((w: any) => {
-        // 使用更精确的行分组（5px容差）
-        const lineNum = Math.round(w.bbox.y0 / 5) * 5;
+        // 使用更小的容差（3px）以保留段落间距和格式
+        const lineNum = Math.round(w.bbox.y0 / 3) * 3;
         if (!lineMap.has(lineNum)) {
           lineMap.set(lineNum, []);
         }
@@ -224,6 +238,7 @@ export async function recognizeImage(
           text: w.text,
           bbox: w.bbox,
           confidence: w.confidence || 0,
+          fontSize: w.bbox.y1 - w.bbox.y0, // 从bbox高度推断字体大小
         });
       });
 
@@ -232,6 +247,9 @@ export async function recognizeImage(
         .map((words) => {
           // 按X坐标排序单词
           const sortedWords = [...words].sort((a, b) => a.bbox.x0 - b.bbox.x0);
+          // 计算行的字体大小（使用平均高度）
+          const lineFontSize = words.reduce((sum, w) => sum + (w.fontSize || (w.bbox.y1 - w.bbox.y0)), 0) / words.length;
+          
           return {
             text: sortedWords.map((w) => w.text).join(" "),
             words: sortedWords,
@@ -241,6 +259,13 @@ export async function recognizeImage(
               x1: Math.max(...words.map((w) => w.bbox.x1)),
               y1: Math.max(...words.map((w) => w.bbox.y1)),
             },
+            fontSize: lineFontSize,
+            // 通过字体大小判断是否为标题（字体大于平均值的1.5倍）
+            isTitle: lineFontSize > avgFontSize * 1.5,
+            // 通过字体大小判断是否为副标题（字体在平均值1.2-1.5倍之间）
+            isSubtitle: lineFontSize > avgFontSize * 1.2 && lineFontSize <= avgFontSize * 1.5,
+            // 对齐方式
+            alignment: "left" as const,
           };
         })
         .sort((a, b) => a.bbox.y0 - b.bbox.y0);
@@ -257,11 +282,29 @@ export async function recognizeImage(
       }
     }
 
-    // 使用结构化数据重建文本以保持布局
+    // 使用结构化数据重建文本以保持布局和格式
     let layoutText = data.text;
     if (lines && lines.length > 0) {
-      // 使用行信息重建文本，保持换行
-      layoutText = lines.map(line => line.text).join("\n");
+      // 使用行信息重建文本，保持换行和段落间距
+      // 检测段落间距：如果两行之间的Y坐标差距较大，添加空行
+      const formattedLines: string[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        formattedLines.push(lines[i].text);
+        
+        // 检查下一行是否存在，以及行间距
+        if (i < lines.length - 1) {
+          const currentLine = lines[i];
+          const nextLine = lines[i + 1];
+          const lineGap = nextLine.bbox.y0 - currentLine.bbox.y1;
+          
+          // 如果行间距大于平均行高的1.5倍，认为是段落分隔，添加空行
+          const avgLineHeight = lines.reduce((sum, l) => sum + (l.bbox.y1 - l.bbox.y0), 0) / lines.length;
+          if (lineGap > avgLineHeight * 1.5) {
+            formattedLines.push(""); // 添加空行表示段落分隔
+          }
+        }
+      }
+      layoutText = formattedLines.join("\n");
     }
 
     await worker.terminate();
@@ -269,7 +312,7 @@ export async function recognizeImage(
     onProgress?.(100);
 
     return {
-      text: layoutText, // 使用保持布局的文本
+      text: layoutText, // 使用保持布局和格式的文本
       confidence: data.confidence || 0,
       words,
       lines,
@@ -313,6 +356,8 @@ export async function recognizePDF(
 
     // 创建Tesseract worker（复用同一个worker以提高性能）
     // 使用chi_sim（简体中文）和eng（英文）的组合
+    // 动态导入 tesseract.js
+    const { createWorker } = await import("tesseract.js");
     const worker = await createWorker("chi_sim+eng", 1, {
       logger: () => {
         // 静默模式，减少控制台输出
@@ -320,10 +365,10 @@ export async function recognizePDF(
     });
 
     // 设置优化参数（保持布局并优化中文识别）
+    // 注意：tessedit_ocr_engine_mode 只能在 createWorker 时设置，不能在这里设置
     await worker.setParameters({
       tessedit_pageseg_mode: "1", // 自动页面分割，保持布局
       preserve_interword_spaces: "1", // 保留单词间空格
-      tessedit_ocr_engine_mode: "1", // LSTM OCR引擎
       // 中文识别优化
       language_model_penalty_non_freq_dict_word: "0.1",
       language_model_penalty_non_dict_word: "0.15",
@@ -418,18 +463,29 @@ export async function recognizePDF(
       let lines: LineInfo[] | undefined;
       let blocks: BlockInfo[] | undefined;
 
-      // 始终提取结构化数据以保持布局
+      // 始终提取结构化数据以保持布局和格式
       if (data.words && data.words.length > 0) {
-        words = data.words.map((w: any) => ({
-          text: w.text,
-          bbox: w.bbox,
-          confidence: w.confidence || 0,
-        }));
+        // 计算平均字体大小（用于识别标题等）
+        const avgFontSize = data.words.reduce((sum: number, w: any) => {
+          return sum + (w.bbox.y1 - w.bbox.y0);
+        }, 0) / data.words.length;
+        
+        words = data.words.map((w: any) => {
+          const fontSize = w.bbox.y1 - w.bbox.y0; // 从bbox高度推断字体大小
+          return {
+            text: w.text,
+            bbox: w.bbox,
+            confidence: w.confidence || 0,
+            fontSize: fontSize,
+          };
+        });
 
-        // 按行分组（保持布局，使用5px容差）
+        // 按行分组（保持布局，使用更精确的容差以保留格式）
+        // 使用较小的容差（3px）以更准确地识别行，保留段落间距
         const lineMap = new Map<number, WordInfo[]>();
         data.words.forEach((w: any) => {
-          const lineNum = Math.round(w.bbox.y0 / 5) * 5;
+          // 使用更小的容差以保留段落间距和格式
+          const lineNum = Math.round(w.bbox.y0 / 3) * 3;
           if (!lineMap.has(lineNum)) {
             lineMap.set(lineNum, []);
           }
@@ -437,6 +493,7 @@ export async function recognizePDF(
             text: w.text,
             bbox: w.bbox,
             confidence: w.confidence || 0,
+            fontSize: w.bbox.y1 - w.bbox.y0, // 从bbox高度推断字体大小
           });
         });
 
@@ -445,6 +502,9 @@ export async function recognizePDF(
           .map((words) => {
             // 按X坐标排序单词
             const sortedWords = [...words].sort((a, b) => a.bbox.x0 - b.bbox.x0);
+            // 计算行的字体大小（使用平均高度）
+            const lineFontSize = words.reduce((sum, w) => sum + (w.fontSize || (w.bbox.y1 - w.bbox.y0)), 0) / words.length;
+            
             return {
               text: sortedWords.map((w) => w.text).join(" "),
               words: sortedWords,
@@ -454,6 +514,13 @@ export async function recognizePDF(
                 x1: Math.max(...words.map((w) => w.bbox.x1)),
                 y1: Math.max(...words.map((w) => w.bbox.y1)),
               },
+              fontSize: lineFontSize,
+              // 通过字体大小判断是否为标题（字体大于平均值的1.5倍）
+              isTitle: lineFontSize > avgFontSize * 1.5,
+              // 通过字体大小判断是否为副标题（字体在平均值1.2-1.5倍之间）
+              isSubtitle: lineFontSize > avgFontSize * 1.2 && lineFontSize <= avgFontSize * 1.5,
+              // 对齐方式
+              alignment: "left" as const,
             };
           })
           .sort((a, b) => a.bbox.y0 - b.bbox.y0);
@@ -470,15 +537,33 @@ export async function recognizePDF(
         }
       }
 
-      // 使用结构化数据重建文本以保持布局
+      // 使用结构化数据重建文本以保持布局和格式
       let layoutText = data.text;
       if (lines && lines.length > 0) {
-        // 使用行信息重建文本，保持换行
-        layoutText = lines.map(line => line.text).join("\n");
+        // 使用行信息重建文本，保持换行和段落间距
+        // 检测段落间距：如果两行之间的Y坐标差距较大，添加空行
+        const formattedLines: string[] = [];
+        for (let i = 0; i < lines.length; i++) {
+          formattedLines.push(lines[i].text);
+          
+          // 检查下一行是否存在，以及行间距
+          if (i < lines.length - 1) {
+            const currentLine = lines[i];
+            const nextLine = lines[i + 1];
+            const lineGap = nextLine.bbox.y0 - currentLine.bbox.y1;
+            
+            // 如果行间距大于平均行高的1.5倍，认为是段落分隔，添加空行
+            const avgLineHeight = lines.reduce((sum, l) => sum + (l.bbox.y1 - l.bbox.y0), 0) / lines.length;
+            if (lineGap > avgLineHeight * 1.5) {
+              formattedLines.push(""); // 添加空行表示段落分隔
+            }
+          }
+        }
+        layoutText = formattedLines.join("\n");
       }
 
       results.push({
-        text: layoutText, // 使用保持布局的文本
+        text: layoutText, // 使用保持布局和格式的文本
         confidence: data.confidence || 0,
         pageNumber: pageNum,
         words,
@@ -500,7 +585,7 @@ export async function recognizePDF(
 }
 
 /**
- * 检测并提取表格数据
+ * 检测并提取表格数据（严格模式）
  */
 export function detectTables(result: OCRResult): TableData[] {
   if (!result.lines || result.lines.length === 0) {
@@ -510,36 +595,75 @@ export function detectTables(result: OCRResult): TableData[] {
   const tables: TableData[] = [];
   const tableLines: LineInfo[] = [];
   
-  // 简单的表格检测：查找对齐的列
+  // 【严格表格检测】要求：
+  // 1. 至少2行具有相同的列对齐模式
+  // 2. 每行至少有2个明显的列（间距足够大）
+  // 3. 列对齐必须一致（容差更小）
+  // 4. 表格至少需要2行
+  
   for (let i = 0; i < result.lines.length; i++) {
     const line = result.lines[i];
     const words = line.words || [];
     
-    // 如果一行有多个单词且它们大致对齐，可能是表格行
-    if (words.length >= 3) {
-      // 检查单词是否大致垂直对齐（X坐标相近）
-      const xPositions = words.map(w => w.bbox.x0).sort((a, b) => a - b);
-      const hasColumns = xPositions.some((x, idx) => 
-        idx > 0 && Math.abs(x - xPositions[idx - 1]) > 50
-      );
+    // 要求：至少2个单词，且单词之间有明显的列分隔
+    if (words.length >= 2) {
+      // 计算单词之间的间距
+      const sortedWords = [...words].sort((a, b) => a.bbox.x0 - b.bbox.x0);
+      const gaps: number[] = [];
+      for (let j = 1; j < sortedWords.length; j++) {
+        const gap = sortedWords[j].bbox.x0 - sortedWords[j - 1].bbox.x1;
+        gaps.push(gap);
+      }
       
-      if (hasColumns) {
-        tableLines.push(line);
+      // 检查是否有明显的列分隔（间距大于平均字符宽度的2倍）
+      const avgWordWidth = words.reduce((sum, w) => sum + (w.bbox.x1 - w.bbox.x0), 0) / words.length;
+      const hasClearColumns = gaps.some(gap => gap > avgWordWidth * 1.5);
+      
+      if (hasClearColumns && words.length >= 2) {
+        // 检查是否与之前的行有相同的列对齐模式
+        if (tableLines.length === 0 || isColumnAligned(line, tableLines[tableLines.length - 1])) {
+          tableLines.push(line);
+        } else {
+          // 列对齐模式改变，可能是表格结束
+          if (tableLines.length >= 2) {
+            // 至少2行才认为是表格
+            const table = extractTableFromLines(tableLines);
+            if (table.rows.length >= 2) {
+              tables.push(table);
+            }
+          }
+          tableLines.length = 0;
+          // 重新开始检测
+          if (hasClearColumns) {
+            tableLines.push(line);
+          }
+        }
       } else if (tableLines.length > 0) {
-        // 表格结束，处理收集的行
-        const table = extractTableFromLines(tableLines);
-        if (table.rows.length > 0) {
-          tables.push(table);
+        // 当前行不符合表格特征，检查之前收集的行
+        if (tableLines.length >= 2) {
+          const table = extractTableFromLines(tableLines);
+          if (table.rows.length >= 2) {
+            tables.push(table);
+          }
         }
         tableLines.length = 0;
       }
+    } else if (tableLines.length > 0) {
+      // 当前行单词太少，可能是表格结束
+      if (tableLines.length >= 2) {
+        const table = extractTableFromLines(tableLines);
+        if (table.rows.length >= 2) {
+          tables.push(table);
+        }
+      }
+      tableLines.length = 0;
     }
   }
   
   // 处理最后一个表格
-  if (tableLines.length > 0) {
+  if (tableLines.length >= 2) {
     const table = extractTableFromLines(tableLines);
-    if (table.rows.length > 0) {
+    if (table.rows.length >= 2) {
       tables.push(table);
     }
   }
@@ -548,51 +672,102 @@ export function detectTables(result: OCRResult): TableData[] {
 }
 
 /**
- * 从行信息中提取表格
+ * 检查两行是否具有相同的列对齐模式
+ */
+function isColumnAligned(line1: LineInfo, line2: LineInfo): boolean {
+  const words1 = (line1.words || []).sort((a, b) => a.bbox.x0 - b.bbox.x0);
+  const words2 = (line2.words || []).sort((a, b) => a.bbox.x0 - b.bbox.x0);
+  
+  if (words1.length < 2 || words2.length < 2) {
+    return false;
+  }
+  
+  // 提取列位置（每行的第一个单词的X坐标）
+  const cols1 = words1.map(w => Math.round(w.bbox.x0 / 15) * 15); // 15px容差
+  const cols2 = words2.map(w => Math.round(w.bbox.x0 / 15) * 15);
+  
+  // 检查是否有至少2个列位置相近（容差15px）
+  let alignedCount = 0;
+  for (const col1 of cols1) {
+    if (cols2.some(col2 => Math.abs(col1 - col2) < 15)) {
+      alignedCount++;
+    }
+  }
+  
+  // 至少2个列对齐才认为是同一表格
+  return alignedCount >= 2;
+}
+
+/**
+ * 从行信息中提取表格（改进版：更严格的列对齐）
  */
 function extractTableFromLines(lines: LineInfo[]): TableData {
   if (lines.length === 0) {
     return { rows: [] };
   }
   
-  // 找到所有列的位置
-  const allXPositions = new Set<number>();
+  // 【改进】找到所有行共有的列位置（至少2行都有单词在该位置附近）
+  const columnCandidates = new Map<number, number>(); // X位置 -> 出现次数
+  
   lines.forEach(line => {
-    line.words?.forEach(word => {
-      allXPositions.add(Math.round(word.bbox.x0 / 20) * 20); // 对齐到20px网格
+    const words = (line.words || []).sort((a, b) => a.bbox.x0 - b.bbox.x0);
+    words.forEach(word => {
+      const colX = Math.round(word.bbox.x0 / 15) * 15; // 15px网格对齐
+      columnCandidates.set(colX, (columnCandidates.get(colX) || 0) + 1);
     });
   });
   
-  const sortedXPositions = Array.from(allXPositions).sort((a, b) => a - b);
+  // 只保留至少出现在2行中的列位置
+  const validColumns = Array.from(columnCandidates.entries())
+    .filter(([_, count]) => count >= 2)
+    .map(([x, _]) => x)
+    .sort((a, b) => a - b);
+  
+  // 如果有效列少于2列，认为不是表格
+  if (validColumns.length < 2) {
+    return { rows: [] };
+  }
   
   // 为每一行提取单元格
   const rows: string[][] = [];
   lines.forEach(line => {
     const row: string[] = [];
-    const words = line.words || [];
+    const words = (line.words || []).sort((a, b) => a.bbox.x0 - b.bbox.x0);
     
-    // 按列位置分组单词
-    sortedXPositions.forEach((colX, colIdx) => {
+    // 为每个有效列位置查找对应的单词
+    validColumns.forEach((colX) => {
+      // 找到最接近该列位置的单词（容差15px）
       const cellWords = words.filter(w => 
-        Math.abs(w.bbox.x0 - colX) < 30
+        Math.abs(w.bbox.x0 - colX) < 15
       ).sort((a, b) => a.bbox.x0 - b.bbox.x0);
       
       const cellText = cellWords.map(w => w.text).join(" ").trim();
       row.push(cellText);
     });
     
+    // 只添加有内容的行
     if (row.some(cell => cell.length > 0)) {
       rows.push(row);
     }
   });
   
-  // 第一行可能是表头
-  const headers = rows.length > 0 && rows[0].some(cell => cell.length > 0)
-    ? rows[0]
+  // 过滤空行
+  const validRows = rows.filter(row => row.some(cell => cell.trim().length > 0));
+  
+  // 如果有效行少于2行，认为不是表格
+  if (validRows.length < 2) {
+    return { rows: [] };
+  }
+  
+  // 第一行可能是表头（如果它与其他行的格式明显不同，比如更短或更少列）
+  const headers = validRows.length > 0 && 
+    (validRows[0].length !== validRows[1]?.length || 
+     validRows[0].every(cell => cell.length < 20)) // 表头通常较短
+    ? validRows[0]
     : undefined;
   
   return {
-    rows: headers ? rows.slice(1) : rows,
+    rows: headers ? validRows.slice(1) : validRows,
     headers,
   };
 }
@@ -605,10 +780,13 @@ export async function exportToWord(
   filename: string = "ocr_result.docx"
 ): Promise<void> {
   try {
+    // 动态导入 docx（必须在函数开始处）
+    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } = await import("docx");
+    
     const resultsArray = Array.isArray(results) ? results : [results];
 
     // 创建Word文档内容
-    const children: (Paragraph | Table)[] = [];
+    const children: (typeof Paragraph | typeof Table)[] = [];
 
     resultsArray.forEach((result, index) => {
       // 如果是多页PDF，添加页面标题
@@ -719,36 +897,112 @@ export async function exportToWord(
       }
 
       // 添加识别文本（如果表格为空或需要完整文本）
-      const textLines = result.text.split("\n").filter((line) => line.trim());
-      
-      if (textLines.length === 0) {
-        children.push(
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: "[此页面未识别到文字]",
-                italics: true,
-                color: "999999",
-              }),
-            ],
-            spacing: { after: 200 },
-          })
-        );
-      } else if (tables.length === 0) {
-        // 如果没有表格，显示完整文本
-        textLines.forEach((line) => {
+      // 【关键改进】使用result.lines中的格式信息，而不是简单的text.split
+      if (result.lines && result.lines.length > 0 && tables.length === 0) {
+        // 使用行信息，保留格式
+        result.lines.forEach((line, lineIndex) => {
+          // 检测段落间距
+          const isParagraphBreak = line.text.trim() === "";
+          if (isParagraphBreak) {
+            children.push(
+              new Paragraph({
+                children: [new TextRun({ text: "" })],
+                spacing: { after: 400 },
+              })
+            );
+            return;
+          }
+          
+          // 根据行的格式信息应用样式
+          let fontSize = 24; // 默认12pt
+          let isBold = false;
+          let isItalic = false;
+          
+          if (line.isTitle) {
+            // 标题：大字体、粗体
+            fontSize = Math.max(32, Math.round((line.fontSize || 24) * 1.2)); // 至少16pt
+            isBold = true;
+          } else if (line.isSubtitle) {
+            // 副标题：中等字体、斜体
+            fontSize = Math.max(26, Math.round((line.fontSize || 24) * 1.1)); // 至少13pt
+            isItalic = true;
+          } else if (line.fontSize) {
+            // 根据实际字体大小计算
+            fontSize = Math.max(20, Math.round(line.fontSize * 0.8)); // 转换为Word的half-points
+          }
+          
+          // 检测缩进（行首空格）
+          const indentMatch = line.text.match(/^(\s+)/);
+          const indentLevel = indentMatch ? Math.floor(indentMatch[1].length / 2) : 0;
+          
           children.push(
             new Paragraph({
               children: [
                 new TextRun({
-                  text: line,
-                  size: 24, // 12pt
+                  text: line.text.trim(),
+                  size: fontSize,
+                  bold: isBold,
+                  italics: isItalic,
                 }),
               ],
-              spacing: { after: 100 },
+              spacing: { 
+                after: line.isTitle ? 300 : line.isSubtitle ? 200 : 100, // 标题和副标题使用更大的间距
+              },
+              indent: {
+                left: indentLevel * 720,
+              },
+              alignment: line.alignment === "center" ? "center" : line.alignment === "right" ? "right" : "left",
             })
           );
         });
+      } else {
+        // 如果没有行信息，回退到简单的文本处理
+        const textLines = result.text.split("\n");
+        
+        if (textLines.length === 0 || textLines.every(line => !line.trim())) {
+          children.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: "[此页面未识别到文字]",
+                  italics: true,
+                  color: "999999",
+                }),
+              ],
+              spacing: { after: 200 },
+            })
+          );
+        } else {
+          textLines.forEach((line, lineIndex) => {
+            const isParagraphBreak = line.trim() === "";
+            const indentMatch = line.match(/^(\s+)/);
+            const indentLevel = indentMatch ? Math.floor(indentMatch[1].length / 2) : 0;
+            
+            if (isParagraphBreak) {
+              children.push(
+                new Paragraph({
+                  children: [new TextRun({ text: "" })],
+                  spacing: { after: 400 },
+                })
+              );
+            } else {
+              children.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: line.trim(),
+                      size: 24,
+                    }),
+                  ],
+                  spacing: { after: 100 },
+                  indent: {
+                    left: indentLevel * 720,
+                  },
+                })
+              );
+            }
+          });
+        }
       }
 
       // 添加页面分隔（如果不是最后一页）
@@ -789,7 +1043,23 @@ export async function exportToWord(
 
     // 生成并下载Word文档
     const blob = await Packer.toBlob(doc);
-    saveAs(blob, filename);
+    // 动态导入 file-saver（处理不同的导出方式）
+    const fileSaver = await import("file-saver");
+    // file-saver 可能使用 default 导出或命名导出
+    const saveAs = fileSaver.default || fileSaver.saveAs || (fileSaver as any).default;
+    if (typeof saveAs === "function") {
+      saveAs(blob, filename);
+    } else {
+      // 如果导入失败，使用备选方案：创建下载链接
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
   } catch (error: any) {
     console.error("导出Word失败:", error);
     throw new Error(`导出Word失败: ${error.message || "未知错误"}`);
