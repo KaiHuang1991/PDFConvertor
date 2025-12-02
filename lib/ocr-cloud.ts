@@ -131,10 +131,18 @@ export async function recognizeWithCloudOCR(
     enableTable?: boolean;
   }
 ): Promise<CloudOCRResult> {
+  console.log("recognizeWithCloudOCR 开始:");
+  console.log("  文件名:", imageFile.name);
+  console.log("  文件大小:", imageFile.size, "bytes");
+  console.log("  文件类型:", imageFile.type);
+  
   // 转换图片为 base64
   const base64 = await fileToBase64(imageFile);
+  console.log("  base64编码完成，长度:", base64?.length || 0);
+  console.log("  base64前100字符:", base64?.substring(0, 100));
 
   // 调用 Next.js API Route
+  console.log("  准备调用 API，provider:", provider);
   const response = await fetch("/api/ocr/recognize", {
     method: "POST",
     headers: {
@@ -146,13 +154,62 @@ export async function recognizeWithCloudOCR(
       enableTable: options?.enableTable || false,
     }),
   });
+  
+  console.log("  API响应状态:", response.status, response.statusText);
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.message || "OCR 识别失败");
+    let errorMessage = "OCR 识别失败";
+    let errorDetails: any = null;
+    
+    try {
+      const error = await response.json();
+      errorMessage = error.error || error.message || errorMessage;
+      errorDetails = error;
+      
+      // 如果有提示信息，也包含进去
+      if (error.hint) {
+        errorMessage += `\n提示: ${error.hint}`;
+      }
+      
+      console.error("OCR API 错误响应:", error);
+    } catch (e) {
+      errorMessage = `OCR API 调用失败: HTTP ${response.status} ${response.statusText}`;
+      console.error("解析错误响应失败:", e);
+    }
+    
+    // 创建详细的错误信息
+    const fullError = new Error(errorMessage);
+    (fullError as any).details = errorDetails;
+    (fullError as any).status = response.status;
+    
+    throw fullError;
   }
 
-  return response.json();
+  const result = await response.json();
+  
+  console.log("  API返回完整结果:", JSON.stringify(result, null, 2));
+  console.log("  API返回结果摘要:", {
+    hasText: !!result.text,
+    textLength: result.text?.length || 0,
+    textPreview: result.text?.substring(0, 100) || "",
+    confidence: result.confidence,
+    hasWords: !!result.words,
+    wordsCount: result.words?.length || 0,
+    hasLines: !!result.lines,
+    linesCount: result.lines?.length || 0,
+    resultKeys: Object.keys(result || {}),
+  });
+  
+  // 如果结果是空的，检查是否有错误信息
+  if ((!result.text || result.text.length === 0) && result.confidence === 0) {
+    console.warn("⚠️  OCR结果为空，可能的原因：");
+    console.warn("  1. 图片中没有可识别的文字");
+    console.warn("  2. 图片质量太差");
+    console.warn("  3. 百度API返回了错误但没有在error字段中");
+    console.warn("  请检查服务器控制台的'百度 OCR API 原始响应'日志");
+  }
+  
+  return result;
 }
 
 /**

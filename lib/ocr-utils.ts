@@ -13,6 +13,10 @@ export interface OCRResult {
   words?: WordInfo[];
   lines?: LineInfo[];
   blocks?: BlockInfo[];
+  tables?: Array<{
+    rows: string[][];
+    headers?: string[];
+  }>;
 }
 
 /**
@@ -161,6 +165,12 @@ export async function recognizeImage(
   }
 ): Promise<OCRResult> {
   try {
+    console.log("┌─ 本地 OCR 引擎 (Tesseract.js) ─┐");
+    console.log("│  引擎: Tesseract.js WebAssembly │");
+    console.log("│  语言: chi_sim + eng            │");
+    console.log("│  模式: 本地处理                 │");
+    console.log("└─────────────────────────────────┘");
+    
     onProgress?.(0);
 
     // 图片预处理（可选，提高准确度但会增加处理时间）
@@ -340,6 +350,12 @@ export async function recognizePDF(
     if (typeof document === "undefined" || typeof window === "undefined") {
       throw new Error("OCR功能需要在浏览器环境中运行");
     }
+
+    console.log("┌─ 本地 OCR 引擎 (Tesseract.js) ─┐");
+    console.log("│  引擎: Tesseract.js WebAssembly │");
+    console.log("│  语言: chi_sim + eng            │");
+    console.log("│  模式: 本地处理                 │");
+    console.log("└─────────────────────────────────┘");
 
     onProgress?.(0);
 
@@ -781,7 +797,7 @@ export async function exportToWord(
 ): Promise<void> {
   try {
     // 动态导入 docx（必须在函数开始处）
-    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType } = await import("docx");
+    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, PageSize, PageOrientation } = await import("docx");
     
     const resultsArray = Array.isArray(results) ? results : [results];
 
@@ -805,156 +821,245 @@ export async function exportToWord(
         );
       }
 
-      // 检测并添加表格
-      const tables = detectTables(result);
-      if (tables.length > 0) {
-        tables.forEach((table, tableIdx) => {
-          if (tableIdx > 0) {
+      // 当前阶段按你的要求：先不在 Word 中绘制表格，只专注于文本排版
+      const tables: Array<{ rows: string[][]; headers?: string[] }> = [];
+
+      // 添加识别文本（仅根据位置重建原始排版，不渲染表格）
+      // 【关键改进】使用OCR位置坐标信息重建PDF原始布局
+      if (result.lines && result.lines.length > 0) {
+        // 【关键改进】根据位置坐标精确重建PDF布局
+        // 第一步：将同一行的文本块合并（根据y坐标相近判断）
+        interface MergedLine {
+          text: string;
+          bbox: { x0: number; y0: number; x1: number; y1: number };
+          words: any[];
+        }
+        
+        const allLines = result.lines.filter(line => line.text && line.text.trim() && line.bbox);
+        if (allLines.length === 0) {
+          // 如果没有有效的lines，尝试使用words重建
+          if (result.words && result.words.length > 0) {
+            // 使用words重建lines
+            const wordsByLine = new Map<number, any[]>();
+            const LINE_TOLERANCE = 3; // y坐标容差
+            
+            result.words.forEach((word: any) => {
+              if (!word.bbox) return;
+              const y = Math.round(word.bbox.y0 / LINE_TOLERANCE) * LINE_TOLERANCE;
+              if (!wordsByLine.has(y)) {
+                wordsByLine.set(y, []);
+              }
+              wordsByLine.get(y)!.push(word);
+            });
+            
+            // 按y坐标排序，然后合并每行的words
+            const sortedYs = Array.from(wordsByLine.keys()).sort((a, b) => a - b);
+            allLines.push(...sortedYs.map(y => {
+              const words = wordsByLine.get(y)!;
+              words.sort((a, b) => (a.bbox.x0 || 0) - (b.bbox.x0 || 0));
+              
+              const x0 = Math.min(...words.map(w => w.bbox.x0 || 0));
+              const y0 = Math.min(...words.map(w => w.bbox.y0 || 0));
+              const x1 = Math.max(...words.map(w => w.bbox.x1 || 0));
+              const y1 = Math.max(...words.map(w => w.bbox.y1 || 0));
+              
+              return {
+                text: words.map(w => w.text).join(" "),
+                bbox: { x0, y0, x1, y1 },
+                words,
+              };
+            }));
+          }
+        }
+        
+        // lines已经在convertBaiduResult中合并过了，这里直接使用，但为了安全再做一次合并
+        // 再次合并同一行的文本块（防止有些lines没有被正确合并）
+        const finalLines: MergedLine[] = [];
+        const LINE_TOLERANCE = 5; // y坐标容差（像素）
+        
+        allLines.forEach((line) => {
+          const lineY = Math.round(line.bbox.y0 / LINE_TOLERANCE) * LINE_TOLERANCE;
+          
+          // 查找是否已有相近的行
+          let found = false;
+          for (let i = 0; i < finalLines.length; i++) {
+            const existingY = Math.round(finalLines[i].bbox.y0 / LINE_TOLERANCE) * LINE_TOLERANCE;
+            if (Math.abs(lineY - existingY) <= LINE_TOLERANCE) {
+              // 同一行，合并文本和bbox
+              finalLines[i].text += " " + line.text;
+              finalLines[i].bbox.x0 = Math.min(finalLines[i].bbox.x0, line.bbox.x0 || 0);
+              finalLines[i].bbox.y0 = Math.min(finalLines[i].bbox.y0, line.bbox.y0 || 0);
+              finalLines[i].bbox.x1 = Math.max(finalLines[i].bbox.x1, line.bbox.x1 || 0);
+              finalLines[i].bbox.y1 = Math.max(finalLines[i].bbox.y1, line.bbox.y1 || 0);
+              if (line.words && Array.isArray(line.words)) {
+                finalLines[i].words.push(...line.words);
+              }
+              found = true;
+              break;
+            }
+          }
+          
+          if (!found) {
+            finalLines.push({
+              text: line.text || "",
+              bbox: { 
+                x0: line.bbox.x0 || 0,
+                y0: line.bbox.y0 || 0,
+                x1: line.bbox.x1 || 0,
+                y1: line.bbox.y1 || 0,
+              },
+              words: line.words || [],
+            });
+          }
+        });
+        
+        // 按y坐标排序
+        finalLines.sort((a, b) => a.bbox.y0 - b.bbox.y0);
+        
+        if (finalLines.length > 0) {
+          // 计算页面的实际宽度（PDF坐标，通常是points单位）
+          const maxX = Math.max(...finalLines.map(line => line.bbox.x1 || 0));
+          const minX = Math.min(...finalLines.map(line => line.bbox.x0 || 0));
+          // A4页面宽度通常是595 points，但实际内容区域可能更窄
+          // 使用实际内容的宽度，或者假设是A4标准宽度
+          // 计算页面尺寸（PDF坐标通常以points为单位）
+          // A4标准尺寸：595 x 842 points (210 x 297 mm)
+          // 假设PDF页面宽度为595 points（标准A4），或者使用实际内容宽度
+          const contentWidth = maxX - minX;
+          const estimatedPageWidth = Math.max(contentWidth + 144, 595); // 至少595 points，加上可能的边距
+          
+          // 计算平均行高
+          const avgLineHeight = finalLines.reduce((sum, line) => {
+            return sum + ((line.bbox.y1 || 0) - (line.bbox.y0 || 0));
+          }, 0) / finalLines.length || 20;
+          
+          console.log("PDF布局信息:", {
+            estimatedPageWidth,
+            minX,
+            maxX,
+            contentWidth: maxX - minX,
+            linesCount: finalLines.length,
+            avgLineHeight,
+          });
+          
+          // 处理每一行，根据位置信息设置格式
+          finalLines.forEach((line, lineIndex) => {
+            if (!line.text || !line.text.trim()) {
+              // 空行，可能是段落分隔
+              // 【优化】减小空行间距，避免内容分散到多页
+              if (lineIndex < finalLines.length - 1) {
+                const nextLine = finalLines[lineIndex + 1];
+                const gap = nextLine.bbox.y0 - (line.bbox.y1 || line.bbox.y0);
+                // 使用较小的缩放因子，避免空行间距过大
+                const spacing = Math.max(60, Math.min(180, Math.round(gap * 0.5))); // 3-9pt
+                children.push(
+                  new Paragraph({
+                    children: [new TextRun({ text: "" })],
+                    spacing: { after: spacing },
+                  })
+                );
+              }
+              return;
+            }
+            
+            // 计算字体大小（基于行高）
+            // OCR坐标通常是像素单位，需要合理转换为Word字体大小
+            const lineHeight = (line.bbox.y1 || 0) - (line.bbox.y0 || 0) || avgLineHeight;
+            // 假设OCR坐标是像素，转换为字体大小（像素到点的比例约为0.75）
+            // 行高通常是字体大小的1.2-1.5倍，字体大小 = 行高 / 1.3 * 0.75
+            // Word使用half-points（1 point = 2 half-points）
+            const fontSizePoints = (lineHeight / 1.3) * 0.75; // 缩小字体大小
+            const fontSize = Math.max(18, Math.min(48, Math.round(fontSizePoints * 2))); // 减小最大字体
+            
+            // 计算缩进：基于行的左边界相对于内容区域左边界的位置
+            // OCR坐标通常是像素单位，需要转换为Word twips
+            // 减小转换比例，避免缩进过大
+            const INDENT_SCALE_FACTOR = 1.5; // 减小缩放因子
+            const lineLeft = line.bbox.x0 || 0;
+            const indentFromContent = lineLeft - minX;
+            // 将OCR像素坐标转换为Word twips（使用较小的缩放因子）
+            const indent = Math.max(0, Math.round(indentFromContent * INDENT_SCALE_FACTOR));
+            
+            // 计算对齐方式（基于行的位置和宽度）
+            const lineWidth = (line.bbox.x1 || 0) - (line.bbox.x0 || 0);
+            const lineRight = line.bbox.x1 || 0;
+            const lineCenter = lineLeft + lineWidth / 2;
+            const contentCenter = minX + contentWidth / 2;
+            
+            let alignment: "left" | "center" | "right" = "left";
+            
+            // 判断对齐方式：计算行中心与内容中心的偏差
+            const centerOffset = Math.abs(lineCenter - contentCenter);
+            
+            // 如果行的中心接近内容中心（误差小于15%），视为居中
+            if (centerOffset < contentWidth * 0.15 && contentWidth > 0) {
+              alignment = "center";
+            } 
+            // 如果行的右边界接近内容右边界（误差小于15%），视为右对齐
+            else if (Math.abs(lineRight - maxX) < contentWidth * 0.15 && contentWidth > 0) {
+              alignment = "right";
+            }
+            
+            // 计算行间距（基于与下一行的距离）
+            // 【优化】减少间距，确保单页PDF导出为单页Word
+            let spacingAfter = 60; // 默认行间距（3pt = 60 twips）- 减小默认值
+            if (lineIndex < finalLines.length - 1) {
+              const nextLine = finalLines[lineIndex + 1];
+              const currentBottom = line.bbox.y1 || line.bbox.y0 + lineHeight;
+              const gap = nextLine.bbox.y0 - currentBottom;
+              
+              // OCR坐标通常是像素单位，需要合理转换为Word twips
+              // 关键是不要转换得太大，否则会分散到多页
+              // 使用较小的缩放因子，并根据实际间距动态调整
+              const SCALE_FACTOR = 0.5; // 进一步减小缩放因子
+              
+              // 计算相对间距（相对于平均行高）
+              const relativeGap = gap / avgLineHeight;
+              
+              if (relativeGap > 2.5) {
+                // 大段落间距：较大的间隙（如标题后）
+                spacingAfter = Math.max(120, Math.min(240, Math.round(gap * SCALE_FACTOR))); // 6-12pt
+              } else if (relativeGap > 1.5) {
+                // 段落间距：中等间隙
+                spacingAfter = Math.max(60, Math.min(180, Math.round(gap * SCALE_FACTOR))); // 3-9pt
+              } else if (relativeGap > 1.1) {
+                // 稍大的行间距
+                spacingAfter = Math.max(30, Math.min(120, Math.round(gap * SCALE_FACTOR))); // 1.5-6pt
+              } else {
+                // 正常行间距：很小或为0
+                spacingAfter = Math.max(0, Math.min(60, Math.round(gap * SCALE_FACTOR))); // 0-3pt
+              }
+            } else {
+              // 最后一行，不需要间距
+              spacingAfter = 0;
+            }
+            
+            // 判断是否为标题（基于字体大小和位置）
+            const isTitle = fontSize > 32 || line.isTitle;
+            const isBold = isTitle || line.isTitle;
+            
             children.push(
               new Paragraph({
-                children: [new TextRun({ text: "" })],
-                spacing: { after: 200 },
-              })
-            );
-          }
-
-          // 创建Word表格
-          const tableRows: TableRow[] = [];
-
-          // 添加表头（如果有）
-          if (table.headers && table.headers.length > 0) {
-            tableRows.push(
-              new TableRow({
-                children: table.headers.map((header) =>
-                  new TableCell({
-                    children: [
-                      new Paragraph({
-                        children: [
-                          new TextRun({
-                            text: header || "",
-                            bold: true,
-                            size: 24,
-                          }),
-                        ],
-                      }),
-                    ],
-                    width: {
-                      size: 100 / table.headers.length,
-                      type: WidthType.PERCENTAGE,
-                    },
-                  })
-                ),
-              })
-            );
-          }
-
-          // 添加数据行
-          table.rows.forEach((row) => {
-            tableRows.push(
-              new TableRow({
-                children: row.map((cell) =>
-                  new TableCell({
-                    children: [
-                      new Paragraph({
-                        children: [
-                          new TextRun({
-                            text: cell || "",
-                            size: 24,
-                          }),
-                        ],
-                      }),
-                    ],
-                    width: {
-                      size: 100 / row.length,
-                      type: WidthType.PERCENTAGE,
-                    },
-                  })
-                ),
+                children: [
+                  new TextRun({
+                    text: line.text.trim(),
+                    size: fontSize,
+                    bold: isBold,
+                    italics: line.isSubtitle || false,
+                  }),
+                ],
+                spacing: { 
+                  after: spacingAfter,
+                },
+                indent: {
+                  left: indent,
+                  firstLine: 0, // 首行缩进单独处理
+                },
+                alignment: alignment,
               })
             );
           });
-
-          if (tableRows.length > 0) {
-            children.push(
-              new Table({
-                rows: tableRows,
-                width: {
-                  size: 100,
-                  type: WidthType.PERCENTAGE,
-                },
-              })
-            );
-          }
-        });
-
-        // 添加表格后的分隔
-        children.push(
-          new Paragraph({
-            children: [new TextRun({ text: "" })],
-            spacing: { after: 200 },
-          })
-        );
-      }
-
-      // 添加识别文本（如果表格为空或需要完整文本）
-      // 【关键改进】使用result.lines中的格式信息，而不是简单的text.split
-      if (result.lines && result.lines.length > 0 && tables.length === 0) {
-        // 使用行信息，保留格式
-        result.lines.forEach((line, lineIndex) => {
-          // 检测段落间距
-          const isParagraphBreak = line.text.trim() === "";
-          if (isParagraphBreak) {
-            children.push(
-              new Paragraph({
-                children: [new TextRun({ text: "" })],
-                spacing: { after: 400 },
-              })
-            );
-            return;
-          }
-          
-          // 根据行的格式信息应用样式
-          let fontSize = 24; // 默认12pt
-          let isBold = false;
-          let isItalic = false;
-          
-          if (line.isTitle) {
-            // 标题：大字体、粗体
-            fontSize = Math.max(32, Math.round((line.fontSize || 24) * 1.2)); // 至少16pt
-            isBold = true;
-          } else if (line.isSubtitle) {
-            // 副标题：中等字体、斜体
-            fontSize = Math.max(26, Math.round((line.fontSize || 24) * 1.1)); // 至少13pt
-            isItalic = true;
-          } else if (line.fontSize) {
-            // 根据实际字体大小计算
-            fontSize = Math.max(20, Math.round(line.fontSize * 0.8)); // 转换为Word的half-points
-          }
-          
-          // 检测缩进（行首空格）
-          const indentMatch = line.text.match(/^(\s+)/);
-          const indentLevel = indentMatch ? Math.floor(indentMatch[1].length / 2) : 0;
-          
-          children.push(
-            new Paragraph({
-              children: [
-                new TextRun({
-                  text: line.text.trim(),
-                  size: fontSize,
-                  bold: isBold,
-                  italics: isItalic,
-                }),
-              ],
-              spacing: { 
-                after: line.isTitle ? 300 : line.isSubtitle ? 200 : 100, // 标题和副标题使用更大的间距
-              },
-              indent: {
-                left: indentLevel * 720,
-              },
-              alignment: line.alignment === "center" ? "center" : line.alignment === "right" ? "right" : "left",
-            })
-          );
-        });
+        }
       } else {
         // 如果没有行信息，回退到简单的文本处理
         const textLines = result.text.split("\n");
@@ -1031,11 +1136,29 @@ export async function exportToWord(
       }
     });
 
-    // 创建Word文档
+    // 创建Word文档，优化页面设置以确保单页PDF导出为单页Word
+    // 简化：直接设置页面大小和边距，不依赖PageSize常量
+    // A4尺寸：210mm x 297mm = 11906 twips x 16838 twips（1 inch = 1440 twips, 1mm = 56.693 twips）
+    const A4_WIDTH = 11906;  // A4宽度（twips）
+    const A4_HEIGHT = 16838; // A4高度（twips）
+    
     const doc = new Document({
       sections: [
         {
-          properties: {},
+          properties: {
+            page: {
+              size: {
+                width: A4_WIDTH,
+                height: A4_HEIGHT,
+              },
+              margin: {
+                top: 720,      // 0.5英寸 = 720 twips（减小页边距）
+                right: 720,    // 0.5英寸
+                bottom: 720,   // 0.5英寸
+                left: 720,     // 0.5英寸
+              },
+            },
+          },
           children: children,
         },
       ],

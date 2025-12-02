@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ArrowLeft, Image, Loader2, Download, Settings, Table2, FileText, BarChart3 } from "lucide-react";
 import Link from "next/link";
@@ -15,8 +15,10 @@ import {
   type OCRResult,
   type TableData,
 } from "@/lib/ocr-utils";
+import { recognizeWithCloudOCR, pdfToImages, type CloudOCRResult } from "@/lib/ocr-cloud";
 
 type ViewMode = "text" | "table" | "stats";
+type OCREngine = "local" | "cloud";
 
 export default function OCRPage() {
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
@@ -28,6 +30,105 @@ export default function OCRPage() {
   const [enablePreprocessing, setEnablePreprocessing] = useState(true);
   const [enableTableDetection, setEnableTableDetection] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [ocrEngine, setOcrEngine] = useState<OCREngine>("local");
+  const [baiduApiAvailable, setBaiduApiAvailable] = useState<boolean | null>(null);
+
+  // 检测百度API是否可用
+  useEffect(() => {
+    const checkBaiduAPI = async () => {
+      try {
+        // 使用专门的配置检测端点（不会真正调用 OCR API）
+        const response = await fetch("/api/ocr/check-config", {
+          method: "GET",
+        });
+        
+        if (!response.ok) {
+          throw new Error("检测配置失败");
+        }
+        
+        const data = await response.json();
+        const isConfigured = data.configured === true;
+        setBaiduApiAvailable(isConfigured);
+        
+        // 如果配置了，默认使用云端OCR
+        if (isConfigured) {
+          setOcrEngine("cloud");
+          console.log("✅ 检测到百度 OCR API 已配置，默认使用云端 OCR");
+        } else {
+          console.log("ℹ️  百度 OCR API 未配置，使用本地 OCR");
+          if (data.message) {
+            console.log(`   提示: ${data.message}`);
+          }
+        }
+      } catch (e: any) {
+        setBaiduApiAvailable(false);
+        console.log("ℹ️  无法检测百度 OCR API 状态，使用本地 OCR");
+        console.log(`   错误: ${e.message || "未知错误"}`);
+      }
+    };
+    
+    checkBaiduAPI();
+  }, []);
+
+  // 将云端OCR结果转换为本地OCR结果格式
+  const convertCloudOCRToLocal = (cloudResult: CloudOCRResult, pageNumber?: number): OCRResult => {
+    console.log("开始转换云端OCR结果:", {
+      textLength: cloudResult.text?.length || 0,
+      confidence: cloudResult.confidence,
+      wordsCount: cloudResult.words?.length || 0,
+      linesCount: cloudResult.lines?.length || 0,
+      tablesCount: cloudResult.tables?.length || 0,
+      hasTables: !!cloudResult.tables && cloudResult.tables.length > 0,
+      hasPageNumber: pageNumber !== undefined,
+    });
+    
+    // 如果有表格，输出表格信息
+    if (cloudResult.tables && cloudResult.tables.length > 0) {
+      console.log(`📊 发现 ${cloudResult.tables.length} 个表格:`);
+      cloudResult.tables.forEach((table, idx) => {
+        console.log(`  表格 ${idx + 1}: ${table.rows?.length || 0} 行, ${table.headers?.length || 0} 个表头`);
+      });
+    } else {
+      console.warn("⚠️  没有表格数据");
+    }
+    
+    const result: OCRResult = {
+      text: cloudResult.text || "",
+      confidence: cloudResult.confidence || 0,
+      pageNumber,
+      words: cloudResult.words?.map(w => ({
+        text: w.text,
+        bbox: w.bbox,
+        confidence: w.confidence,
+      })),
+      lines: cloudResult.lines?.map(l => ({
+        text: l.text,
+        words: l.words.map(w => ({
+          text: w.text,
+          bbox: w.bbox,
+          confidence: w.confidence,
+        })),
+        bbox: l.bbox,
+      })),
+      // 传递表格数据
+      tables: cloudResult.tables,
+    };
+    
+    console.log("转换完成:", {
+      textLength: result.text.length,
+      confidence: result.confidence,
+      pageNumber: result.pageNumber,
+      tablesCount: result.tables?.length || 0,
+      hasTables: !!result.tables && result.tables.length > 0,
+    });
+    
+    // 如果有表格，输出详细信息
+    if (result.tables && result.tables.length > 0) {
+      console.log(`✅ 表格数据已传递到OCRResult: ${result.tables.length} 个表格`);
+    }
+    
+    return result;
+  };
 
   const handleOCR = async () => {
     if (uploadedFiles.length === 0) return;
@@ -47,18 +148,124 @@ export default function OCRPage() {
         enableTableDetection,
       };
 
-      if (isPDFFile(file)) {
-        // PDF文件OCR
-        ocrResult = await recognizePDF(file, (progress) => {
-          setProgress(progress);
-        }, options);
-      } else if (isImageFile(file)) {
-        // 图片文件OCR
-        ocrResult = await recognizeImage(file, (progress) => {
-          setProgress(progress);
-        }, options);
+      // 【OCR引擎信息】输出当前使用的OCR服务器
+      const isCloudOCR = ocrEngine === "cloud" && baiduApiAvailable;
+      
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log("🔍 OCR 识别引擎信息");
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log("📄 文件信息:");
+      console.log(`   文件名: ${file.name}`);
+      console.log(`   文件类型: ${file.type}`);
+      console.log(`   文件大小: ${(file.size / 1024 / 1024).toFixed(2)} MB`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      
+      if (isCloudOCR) {
+        console.log("🖥️  当前使用的 OCR 引擎: 百度云端 OCR");
+        console.log("   - 引擎类型: 百度智能云 OCR API");
+        console.log("   - 识别语言: 中英文混合");
+        console.log("   - 准确率: 95%+ (高精度)");
+        console.log("   - 处理速度: 200-500ms (快速)");
+        console.log("   - 数据隐私: 需要上传到百度服务器");
       } else {
-        throw new Error("不支持的文件格式，请上传PDF或图片文件");
+        console.log("🖥️  当前使用的 OCR 引擎: 本地 OCR (Tesseract.js)");
+        console.log("   - 引擎类型: 本地 WebAssembly");
+        console.log("   - 识别语言: 简体中文 + 英文");
+        console.log("   - 数据隐私: 完全本地处理，不上传服务器");
+        console.log("   - 处理方式: 浏览器内处理，保护隐私");
+      }
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+      if (isCloudOCR) {
+        // 使用云端OCR
+        if (isPDFFile(file)) {
+          console.log("📚 开始PDF云端OCR识别...");
+          setProgress(10);
+          
+          // PDF转图片
+          const images = await pdfToImages(file);
+          setProgress(30);
+          
+          const results: OCRResult[] = [];
+          const totalPages = images.length;
+          
+          for (let i = 0; i < images.length; i++) {
+            const image = images[i];
+            const pageNum = i + 1;
+            
+            console.log(`正在识别第 ${pageNum}/${totalPages} 页...`);
+            setProgress(30 + (i / totalPages) * 60);
+            
+            try {
+              // 启用表格识别：同时调用普通识别和表格识别API，合并结果
+              const cloudResult = await recognizeWithCloudOCR(
+                image,
+                "baidu",
+                { enableTable: enableTableDetection } // 启用表格识别
+              );
+              
+              console.log(`第 ${pageNum} 页云端OCR结果:`, {
+                text: cloudResult.text?.substring(0, 100) + "...",
+                confidence: cloudResult.confidence,
+                wordsCount: cloudResult.words?.length || 0,
+                linesCount: cloudResult.lines?.length || 0,
+              });
+              
+              const localResult = convertCloudOCRToLocal(cloudResult, pageNum);
+              console.log(`第 ${pageNum} 页转换后的结果:`, {
+                text: localResult.text?.substring(0, 100) + "...",
+                confidence: localResult.confidence,
+                pageNumber: localResult.pageNumber,
+              });
+              
+              results.push(localResult);
+            } catch (err: any) {
+              console.error(`第 ${pageNum} 页识别失败:`, err);
+              // 如果云端OCR失败，可以继续处理其他页
+              results.push({
+                text: `第 ${pageNum} 页识别失败: ${err.message}`,
+                confidence: 0,
+                pageNumber: pageNum,
+              });
+            }
+          }
+          
+          ocrResult = results;
+          setProgress(100);
+        } else if (isImageFile(file)) {
+          console.log("🖼️  开始图片云端OCR识别...");
+          setProgress(30);
+          
+          // 启用表格识别：同时调用普通识别和表格识别API，合并结果
+          const cloudResult = await recognizeWithCloudOCR(
+            file,
+            "baidu",
+            { enableTable: enableTableDetection } // 启用表格识别
+          );
+          
+          console.log("图片云端OCR结果:", cloudResult);
+          
+          ocrResult = convertCloudOCRToLocal(cloudResult);
+          console.log("转换后的结果:", ocrResult);
+          setProgress(100);
+        } else {
+          throw new Error("不支持的文件格式，请上传PDF或图片文件");
+        }
+      } else {
+        // 使用本地OCR
+        if (isPDFFile(file)) {
+          console.log("📚 开始PDF本地OCR识别...");
+          ocrResult = await recognizePDF(file, (progress) => {
+            setProgress(progress);
+          }, options);
+        } else if (isImageFile(file)) {
+          console.log("🖼️  开始图片本地OCR识别...");
+          ocrResult = await recognizeImage(file, (progress) => {
+            setProgress(progress);
+          }, options);
+        } else {
+          throw new Error("不支持的文件格式，请上传PDF或图片文件");
+        }
       }
 
       setResult(ocrResult);
@@ -217,24 +424,83 @@ export default function OCRPage() {
                     识别设置
                   </h4>
                   <div className="space-y-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={enablePreprocessing}
-                        onChange={(e) => setEnablePreprocessing(e.target.checked)}
-                        className="w-4 h-4 text-blue-600 rounded"
-                      />
-                      <span className="text-sm">启用图片预处理（提高准确度，但处理时间更长）</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={enableTableDetection}
-                        onChange={(e) => setEnableTableDetection(e.target.checked)}
-                        className="w-4 h-4 text-blue-600 rounded"
-                      />
-                      <span className="text-sm">启用表格检测（自动识别表格结构）</span>
-                    </label>
+                    {/* OCR引擎选择 */}
+                    <div>
+                      <label className="block text-sm font-medium mb-2">OCR 引擎</label>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setOcrEngine("local")}
+                          disabled={processing}
+                          className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                            ocrEngine === "local"
+                              ? "bg-blue-600 text-white"
+                              : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
+                          } ${processing ? "opacity-50 cursor-not-allowed" : ""}`}
+                        >
+                          本地 OCR
+                          <div className="text-xs mt-0.5 opacity-90">免费 · 隐私</div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setOcrEngine("cloud")}
+                          disabled={processing || !baiduApiAvailable}
+                          className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                            ocrEngine === "cloud"
+                              ? "bg-green-600 text-white"
+                              : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600"
+                          } ${processing || !baiduApiAvailable ? "opacity-50 cursor-not-allowed" : ""}`}
+                          title={!baiduApiAvailable ? "百度 API 未配置，请查看 OCR_BAIDU_SETUP.md" : ""}
+                        >
+                          百度云端 OCR
+                          <div className="text-xs mt-0.5 opacity-90">
+                            {baiduApiAvailable ? "高精度 · 快速" : "需要配置"}
+                          </div>
+                        </button>
+                      </div>
+                      {!baiduApiAvailable && ocrEngine === "cloud" && (
+                        <p className="text-xs text-orange-600 dark:text-orange-400 mt-2">
+                          ⚠️ 百度 OCR API 未配置，请查看 OCR_BAIDU_SETUP.md 进行配置
+                        </p>
+                      )}
+                    </div>
+                    
+                    {/* 仅在本地OCR时显示这些选项 */}
+                    {ocrEngine === "local" && (
+                      <>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={enablePreprocessing}
+                            onChange={(e) => setEnablePreprocessing(e.target.checked)}
+                            className="w-4 h-4 text-blue-600 rounded"
+                          />
+                          <span className="text-sm">启用图片预处理（提高准确度，但处理时间更长）</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={enableTableDetection}
+                            onChange={(e) => setEnableTableDetection(e.target.checked)}
+                            className="w-4 h-4 text-blue-600 rounded"
+                          />
+                          <span className="text-sm">启用表格检测（自动识别表格结构）</span>
+                        </label>
+                      </>
+                    )}
+                    
+                    {/* 云端OCR说明 */}
+                    {ocrEngine === "cloud" && baiduApiAvailable && (
+                      <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg text-sm text-green-800 dark:text-green-300">
+                        <strong>✅ 百度云端 OCR 已启用</strong>
+                        <ul className="mt-1 list-disc list-inside space-y-1 text-xs">
+                          <li>识别准确率: 95%+</li>
+                          <li>处理速度: 200-500ms</li>
+                          <li>支持表格和手写识别</li>
+                          <li>数据需要上传到百度服务器</li>
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
