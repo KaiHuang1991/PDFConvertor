@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { FileText, Sparkles, Image, ArrowRight } from "lucide-react";
+import { FileText, Sparkles, Image, ArrowRight, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import UserMenu from "@/components/UserMenu";
 
@@ -30,6 +30,9 @@ export default function Home() {
                 <Link href="/tools" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
                   PDF工具
                 </Link>
+                <Link href="/convert" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
+                  格式转换
+                </Link>
                 <Link href="/chat" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
                   AI聊天
                 </Link>
@@ -54,7 +57,7 @@ export default function Home() {
             下一代AI PDF工具
           </h2>
           <p className="text-xl md:text-2xl text-gray-600 dark:text-gray-300 mb-8 max-w-3xl mx-auto">
-            免费、快速、强大 - 合并、拆分、压缩、解锁、OCR、智能聊天
+            免费、快速、强大 - 合并、拆分、压缩、转换、解锁、OCR、智能聊天
             <br />
             <span className="text-blue-600 dark:text-blue-400 font-semibold">完全前端运行，保护您的隐私</span>
           </p>
@@ -77,6 +80,12 @@ export default function Home() {
               title: "PDF编辑器", 
               desc: "图像/形状插入、注释标记、页面管理、表单填写、签名添加",
               href: "/editor"
+            },
+            { 
+              icon: RefreshCw, 
+              title: "PDF格式转换", 
+              desc: "PDF转图片、文本、HTML，支持批量转换，完全本地处理",
+              href: "/convert"
             },
             { 
               icon: Sparkles, 
