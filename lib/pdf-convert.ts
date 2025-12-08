@@ -398,8 +398,11 @@ export async function pdfToWord(
   const pdfHeight = viewport.height;
   
   // 计算缩放比例（将 PDF 尺寸映射到 Word 页面）
-  const scaleX = (A4_WIDTH_TWIPS - 1440) / pdfWidth; // 减去页边距
-  const scaleY = (A4_HEIGHT_TWIPS - 1440) / pdfHeight;
+  // Word页边距：每边720 twips (0.5英寸)
+  const wordContentWidth = A4_WIDTH_TWIPS - 1440; // 减去左右页边距
+  const wordContentHeight = A4_HEIGHT_TWIPS - 1440; // 减去上下页边距
+  const scaleX = wordContentWidth / pdfWidth;
+  const scaleY = wordContentHeight / pdfHeight;
 
   const children: any[] = [];
   
@@ -463,6 +466,7 @@ export async function pdfToWord(
           bold,
           italic,
         });
+      }
       });
       
       // 每处理一批就让出控制权
@@ -510,26 +514,47 @@ export async function pdfToWord(
     // 按 y 坐标排序（从上到下）
     lines.sort((a, b) => b[0].y - a[0].y);
 
-    // 为每一行创建段落
+    // 为每一行创建段落（改进版：更准确地还原布局）
     lines.forEach((line, lineIndex) => {
       // 按 x 坐标排序（从左到右）
       line.sort((a, b) => a.x - b.x);
 
       const textRuns: any[] = [];
-      let lastX = 0;
-
+      const avgFontSize = line.reduce((sum, i) => sum + (i.fontSize || 12), 0) / line.length;
+      
+      // 更准确地还原布局：基于实际坐标位置
       line.forEach((item, itemIndex) => {
-        // 计算缩进（基于 x 坐标）
-        const indent = preserveLayout ? (item.x - lastX) * (scaleX / 20) : 0; // 转换为 twips
+        // 计算与前一个元素之间的间距
+        if (itemIndex > 0) {
+          const prevItem = line[itemIndex - 1];
+          const gap = item.x - (prevItem.x + prevItem.width);
+          
+          // 根据间距决定如何处理
+          if (gap > avgFontSize * 5) {
+            // 大间距：可能是多列布局，使用制表符
+            textRuns.push(new TextRun({ text: "\t" }));
+          } else if (gap > 2) {
+            // 中等间距：使用空格
+            const spaces = Math.min(Math.round(gap / avgFontSize), 30);
+            if (spaces > 0) {
+              textRuns.push(new TextRun({ text: " ".repeat(spaces) }));
+            }
+          } else if (gap < -avgFontSize * 0.5) {
+            // 文本重叠：不添加间距
+          } else {
+            // 小间距：添加一个空格
+            textRuns.push(new TextRun({ text: " " }));
+          }
+        }
         
         // 创建文本运行
         const runOptions: any = {
-          text: item.text + (itemIndex < line.length - 1 ? "" : " "),
+          text: item.text,
         };
 
         if (preserveFormatting) {
           if (item.fontSize) {
-            runOptions.size = Math.round(item.fontSize * 2); // 转换为 half-points
+            runOptions.size = Math.round(item.fontSize * 2);
           }
           if (item.bold) {
             runOptions.bold = true;
@@ -543,21 +568,6 @@ export async function pdfToWord(
         }
 
         textRuns.push(new TextRun(runOptions));
-
-        // 如果有间距，添加空格
-        if (preserveLayout && itemIndex < line.length - 1) {
-          const nextItem = line[itemIndex + 1];
-          const gap = nextItem.x - (item.x + item.width);
-          if (gap > 5) {
-            // 如果有明显间距，添加相应数量的空格
-            const spaces = Math.min(Math.round(gap / item.fontSize), 20);
-            if (spaces > 0) {
-              textRuns.push(new TextRun({ text: " ".repeat(spaces) }));
-            }
-          }
-        }
-
-        lastX = item.x + item.width;
       });
 
       // 计算段落对齐方式
@@ -569,25 +579,43 @@ export async function pdfToWord(
         const rightMargin = pageViewport.width - (lastItem.x + lastItem.width);
         
         // 如果左右边距相近，认为是居中
-        if (Math.abs(leftMargin - rightMargin) < 20) {
+        if (Math.abs(leftMargin - rightMargin) < 30) {
           alignment = AlignmentType.CENTER;
         } else if (rightMargin < leftMargin) {
           alignment = AlignmentType.RIGHT;
         }
       }
 
-      // 计算段落间距
+      // 计算段落间距（精确计算，考虑实际行高和位置）
       let spacingAfter = 0;
       if (preserveLayout && lineIndex < lines.length - 1) {
         const currentY = line[0].y;
-        const nextY = lines[lineIndex + 1][0].y;
-        const gap = currentY - nextY - line[0].height;
-        spacingAfter = Math.max(0, Math.round(gap * (scaleY / 20))); // 转换为 twips
+        const nextLine = lines[lineIndex + 1];
+        const nextY = nextLine[0].y;
+        const currentLineHeight = line.reduce((max, i) => Math.max(max, i.height || i.fontSize || 12), 0);
+        const nextLineHeight = nextLine.reduce((max, i) => Math.max(max, i.height || i.fontSize || 12), 0);
+        
+        // 计算两行之间的实际间距
+        const actualGap = currentY - nextY - currentLineHeight;
+        
+        // 转换为 twips
+        if (actualGap > 0) {
+          // 使用更精确的缩放，但限制最大间距以避免页面过度拉伸
+          spacingAfter = Math.max(0, Math.min(Math.round(actualGap * (scaleY / 20) * 0.4), 240));
+        } else if (actualGap < -nextLineHeight * 0.5) {
+          // 行重叠严重，使用负间距（但这在Word中有限制）
+          spacingAfter = 0;
+        } else {
+          // 行紧贴，使用最小间距
+          spacingAfter = 60; // 3 points
+        }
       }
 
       // 计算缩进（基于第一个元素的 x 坐标）
       const firstItem = line[0];
-      const indent = preserveLayout ? Math.round(firstItem.x * (scaleX / 20)) : 0;
+      // 将PDF坐标转换为Word twips，并减去Word的左边距（720 twips）
+      const pdfXInTwips = firstItem.x * (scaleX / 20);
+      const indent = preserveLayout ? Math.max(0, Math.round(pdfXInTwips)) : 0;
 
       // 创建段落
       const paragraph = new Paragraph({
@@ -595,6 +623,7 @@ export async function pdfToWord(
         alignment,
         spacing: {
           after: spacingAfter,
+          line: preserveLayout ? Math.round(avgFontSize * 2.4) : undefined, // 行高
         },
         indent: indent > 0 ? {
           left: indent,
@@ -647,7 +676,7 @@ export async function pdfToWord(
             },
           },
         },
-        children: finalChildren,
+        children: children,
       },
     ],
   });

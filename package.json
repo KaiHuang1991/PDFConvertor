@@ -12,6 +12,7 @@
     "copy-worker": "node scripts/copy-worker.js"
   },
   "dependencies": {
+    "@adobe/pdfservices-node-sdk": "^4.1.0",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.0",
     "docx": "^8.5.0",
