@@ -77,7 +77,7 @@ export default function PDFConverter({ file }: PDFConverterProps) {
 
       // 下载所有图片
       const baseName = file.name.replace(/\.pdf$/i, "");
-      downloadImages(images, baseName, imageFormat);
+      await downloadImages(images, baseName, imageFormat);
 
       setSuccess(`成功转换 ${images.length} 张图片！`);
     } catch (err: any) {
@@ -102,7 +102,7 @@ export default function PDFConverter({ file }: PDFConverterProps) {
       // 创建文本文件并下载
       const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
       const filename = file.name.replace(/\.pdf$/i, ".txt");
-      downloadFile(blob, filename);
+      await downloadFile(blob, filename);
 
       setSuccess("文本转换成功！");
     } catch (err: any) {
@@ -133,7 +133,7 @@ export default function PDFConverter({ file }: PDFConverterProps) {
       // 创建 HTML 文件并下载
       const blob = new Blob([html], { type: "text/html;charset=utf-8" });
       const filename = file.name.replace(/\.pdf$/i, ".html");
-      downloadFile(blob, filename);
+      await downloadFile(blob, filename);
 
       setSuccess("HTML 转换成功！");
     } catch (err: any) {

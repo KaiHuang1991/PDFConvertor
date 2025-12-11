@@ -3,7 +3,8 @@
  * 支持 PDF 转图片、文本、HTML 等格式
  */
 
-import { saveAs } from "file-saver";
+// file-saver 只在客户端使用，使用动态导入避免服务器端错误
+// import { saveAs } from "file-saver";
 
 /**
  * PDF 转图片选项
@@ -307,19 +308,24 @@ function escapeHtml(text: string): string {
 /**
  * 下载文件
  */
-export function downloadFile(blob: Blob, filename: string): void {
+export async function downloadFile(blob: Blob, filename: string): Promise<void> {
+  // 动态导入 file-saver，避免服务器端错误
+  if (typeof window === 'undefined') {
+    throw new Error('downloadFile 只能在客户端使用');
+  }
+  const { saveAs } = await import("file-saver");
   saveAs(blob, filename);
 }
 
 /**
  * 批量下载图片
  */
-export function downloadImages(images: Blob[], baseName: string, format: string): void {
-  images.forEach((blob, index) => {
+export async function downloadImages(images: Blob[], baseName: string, format: string): Promise<void> {
+  for (const [index, blob] of images.entries()) {
     const pageNum = String(index + 1).padStart(3, "0");
     const ext = format === "png" ? "png" : "jpg";
-    downloadFile(blob, `${baseName}_page_${pageNum}.${ext}`);
-  });
+    await downloadFile(blob, `${baseName}_page_${pageNum}.${ext}`);
+  }
 }
 
 /**
@@ -363,13 +369,22 @@ interface TextItem {
 }
 
 /**
- * PDF 转 Word（精准还原排版）
+ * PDF 转 Word（使用 Adobe API）
  */
 export async function pdfToWord(
   file: File,
   options: PDFToWordOptions = {},
   onProgress?: (current: number, total: number) => void
 ): Promise<void> {
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("📤 [PDF转Word] 开始转换");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("文件信息:");
+  console.log("  - 文件名:", file.name);
+  console.log("  - 文件大小:", file.size, "bytes");
+  console.log("  - 文件类型:", file.type);
+  console.log("选项:", options);
+  
   const {
     preserveFormatting = true,
     preserveLayout = true,
@@ -377,6 +392,103 @@ export async function pdfToWord(
     imageScale = 1.5,
   } = options;
 
+  try {
+    onProgress?.(10, 100);
+    console.log("[1/4] 准备FormData...");
+    
+    // 使用 Adobe API 进行转换
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("format", "docx");
+
+    onProgress?.(30, 100);
+    console.log("[2/4] 发送请求到 /api/adobe/convert...");
+
+    const response = await fetch("/api/adobe/convert", {
+      method: "POST",
+      body: formData,
+    });
+
+    console.log("[3/4] 收到响应:");
+    console.log("  - 状态码:", response.status);
+    console.log("  - 状态文本:", response.statusText);
+    console.log("  - Content-Type:", response.headers.get("Content-Type"));
+    console.log("  - Content-Length:", response.headers.get("Content-Length"));
+
+    if (!response.ok) {
+      let errorMessage = "转换失败";
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+        console.error("❌ API返回错误:", errorData);
+      } catch (e) {
+        console.error("❌ 无法解析错误响应:", e);
+        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      }
+      throw new Error(errorMessage);
+    }
+
+    onProgress?.(70, 100);
+    console.log("[4/4] 读取响应Blob...");
+
+    // 下载结果文件
+    const blob = await response.blob();
+    console.log("✅ Blob创建成功:");
+    console.log("  - Blob大小:", blob.size, "bytes");
+    console.log("  - Blob类型:", blob.type);
+    
+    if (blob.size === 0) {
+      console.error("❌ Blob大小为0，文件为空！");
+      throw new Error("下载的文件为空，可能是转换失败");
+    }
+    
+    // 检查DOCX文件头（ZIP格式）
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const header = Array.from(uint8Array.slice(0, 4))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+    console.log("  - 文件头(hex):", header);
+    if (header === '504b0304') {
+      console.log("✅ DOCX文件头验证通过 (ZIP格式)");
+    } else {
+      console.warn("⚠️ 警告: DOCX文件头不正确");
+      console.warn("  期望: 504b0304 (ZIP格式)");
+      console.warn("  实际:", header);
+    }
+
+    onProgress?.(90, 100);
+    console.log("📥 创建下载链接...");
+    
+    // 动态导入 file-saver，处理不同的导出方式
+    const fileSaver = await import("file-saver");
+    const saveAs = fileSaver.default || fileSaver.saveAs || fileSaver;
+    
+    if (typeof saveAs !== 'function') {
+      console.error("❌ saveAs 不是函数:", typeof saveAs, saveAs);
+      throw new Error("无法加载文件保存功能，请刷新页面重试");
+    }
+    
+    const filename = file.name.replace(/\.pdf$/i, ".docx");
+    saveAs(blob, filename);
+    
+    console.log("✅ 下载完成，文件名:", filename);
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    onProgress?.(100, 100);
+  } catch (error: any) {
+    console.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.error("❌ [PDF转Word] 转换失败");
+    console.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.error("错误信息:", error.message);
+    console.error("错误堆栈:", error.stack);
+    console.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    throw error;
+  }
+
+  // 旧的本地实现代码已移除，现在使用Adobe API
+  // 以下代码已注释，改用Adobe API实现
+  /*
   const { Document, Packer, Paragraph, TextRun, AlignmentType, Media } = await import("docx");
 
   // Word 页面设置（A4 尺寸）
@@ -685,6 +797,7 @@ export async function pdfToWord(
   const blob = await Packer.toBlob(finalDoc);
   const filename = file.name.replace(/\.pdf$/i, ".docx");
   saveAs(blob, filename);
+  */
 }
 
 /**

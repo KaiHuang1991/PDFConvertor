@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import FileUploader from "@/components/FileUploader";
 
-type ConvertFormat = "ocr" | "docx" | "pptx" | "xlsx" | "rtf" | "jpg" | "png";
+type ConvertFormat = "ocr" | "docx" | "pptx" | "xlsx" | "rtf" | "jpg" | "png" | "word-to-pdf" | "office-to-pdf";
 
 export default function AdobeOCRConverter() {
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
@@ -102,37 +102,122 @@ export default function AdobeOCRConverter() {
       const file = uploadedFiles[0];
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("format", format);
+      
+      // Word转PDF或Office转PDF
+      if (format === "word-to-pdf" || format === "office-to-pdf") {
+        setProgress(30);
 
-      setProgress(30);
+        const response = await fetch("/api/adobe/create-pdf", {
+          method: "POST",
+          body: formData,
+        });
 
-      const response = await fetch("/api/adobe/convert", {
-        method: "POST",
-        body: formData,
-      });
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || "转 PDF 失败");
+        }
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "转换失败");
+        setProgress(70);
+
+        // 下载结果文件
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const baseName = file.name.replace(/\.[^.]+$/, "");
+        a.download = `${baseName}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        setProgress(100);
+        setSuccess("转换成功！已下载 PDF 文件");
+      } else {
+        // PDF转其他格式
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        console.log("📤 [前端调试] 开始PDF转Word请求");
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        console.log("文件信息:");
+        console.log("  - 文件名:", file.name);
+        console.log("  - 文件大小:", file.size, "bytes");
+        console.log("  - 文件类型:", file.type);
+        console.log("  - 目标格式:", format);
+        
+        formData.append("format", format);
+
+        setProgress(30);
+        console.log("⏳ 发送请求到 /api/adobe/convert...");
+
+        const response = await fetch("/api/adobe/convert", {
+          method: "POST",
+          body: formData,
+        });
+
+        console.log("📥 收到响应:");
+        console.log("  - 状态码:", response.status);
+        console.log("  - 状态文本:", response.statusText);
+        console.log("  - Content-Type:", response.headers.get("Content-Type"));
+        console.log("  - Content-Length:", response.headers.get("Content-Length"));
+        console.log("  - Content-Disposition:", response.headers.get("Content-Disposition"));
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error("❌ API返回错误:", errorData);
+          throw new Error(errorData.error || "转换失败");
+        }
+
+        setProgress(70);
+        console.log("📥 开始读取响应Blob...");
+
+        // 下载结果文件
+        const blob = await response.blob();
+        console.log("✅ Blob创建成功:");
+        console.log("  - Blob大小:", blob.size, "bytes");
+        console.log("  - Blob类型:", blob.type);
+        
+        if (blob.size === 0) {
+          console.error("❌ Blob大小为0，文件为空！");
+          throw new Error("下载的文件为空，可能是转换失败");
+        }
+        
+        // 检查Blob内容（仅用于调试）
+        if (format === 'docx') {
+          const arrayBuffer = await blob.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          const header = Array.from(uint8Array.slice(0, 4))
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
+          console.log("  - 文件头(hex):", header);
+          if (header === '504b0304') {
+            console.log("✅ DOCX文件头验证通过 (ZIP格式)");
+          } else {
+            console.warn("⚠️ 警告: DOCX文件头不正确");
+            console.warn("  期望: 504b0304 (ZIP格式)");
+            console.warn("  实际:", header);
+          }
+        }
+
+        console.log("📥 创建下载链接...");
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        const extension = format;
+        const baseName = file.name.replace(/\.pdf$/i, "");
+        a.download = `${baseName}.${extension}`;
+        console.log("  - 下载文件名:", a.download);
+        
+        document.body.appendChild(a);
+        console.log("🖱️ 触发下载...");
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        console.log("✅ 下载完成");
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+        setProgress(100);
+        setSuccess(`转换成功！已下载 ${format.toUpperCase()} 文件`);
       }
-
-      setProgress(70);
-
-      // 下载结果文件
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      const extension = format;
-      const baseName = file.name.replace(/\.pdf$/i, "");
-      a.download = `${baseName}.${extension}`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-
-      setProgress(100);
-      setSuccess(`转换成功！已下载 ${format.toUpperCase()} 文件`);
     } catch (err: any) {
       setError(err.message || "转换失败");
     } finally {
@@ -197,6 +282,20 @@ export default function AdobeOCRConverter() {
       icon: ImageIcon,
       color: "cyan",
     },
+    {
+      id: "word-to-pdf",
+      name: "Word 转 PDF",
+      description: "将 Word 文档转换为 PDF",
+      icon: FileType,
+      color: "indigo",
+    },
+    {
+      id: "office-to-pdf",
+      name: "Office 转 PDF",
+      description: "将 Office 文档转换为 PDF",
+      icon: FileType,
+      color: "teal",
+    },
   ];
 
   return (
@@ -211,7 +310,13 @@ export default function AdobeOCRConverter() {
       )}
 
       {/* 文件上传 */}
-      <FileUploader files={uploadedFiles} onFilesChange={setUploadedFiles} />
+      <FileUploader 
+        files={uploadedFiles} 
+        onFilesChange={setUploadedFiles}
+        accept={activeFormat === "word-to-pdf" || activeFormat === "office-to-pdf" 
+          ? ".docx,.doc,.pptx,.ppt,.xlsx,.xls,.rtf,.txt,.html,.htm" 
+          : ".pdf"}
+      />
 
       {/* 格式选择卡片 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -237,6 +342,12 @@ export default function AdobeOCRConverter() {
             cyan: isActive
               ? "border-cyan-500 bg-cyan-50 dark:bg-cyan-900/20"
               : "border-gray-200 dark:border-gray-700 hover:border-cyan-300",
+            indigo: isActive
+              ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20"
+              : "border-gray-200 dark:border-gray-700 hover:border-indigo-300",
+            teal: isActive
+              ? "border-teal-500 bg-teal-50 dark:bg-teal-900/20"
+              : "border-gray-200 dark:border-gray-700 hover:border-teal-300",
           };
 
           return (
@@ -250,7 +361,40 @@ export default function AdobeOCRConverter() {
               onClick={() => {
                 if (format.id === "ocr") {
                   handleOCR();
+                } else if (format.id === "word-to-pdf" || format.id === "office-to-pdf") {
+                  // 检查文件类型
+                  const file = uploadedFiles[0];
+                  if (!file) return;
+                  
+                  const fileName = file.name.toLowerCase();
+                  const isWord = fileName.endsWith('.docx') || fileName.endsWith('.doc');
+                  const isOffice = fileName.endsWith('.pptx') || fileName.endsWith('.xlsx') || 
+                                   fileName.endsWith('.ppt') || fileName.endsWith('.xls') ||
+                                   fileName.endsWith('.rtf') || fileName.endsWith('.txt') ||
+                                   fileName.endsWith('.html') || fileName.endsWith('.htm');
+                  
+                  if (format.id === "word-to-pdf" && !isWord) {
+                    setError("请上传 Word 文档 (.docx 或 .doc)");
+                    return;
+                  }
+                  
+                  if (format.id === "office-to-pdf" && !isOffice && !isWord) {
+                    setError("请上传 Office 文档 (.docx, .pptx, .xlsx, .rtf, .txt, .html)");
+                    return;
+                  }
+                  
+                  handleConvert(format.id);
                 } else {
+                  // PDF转其他格式，检查是否为PDF
+                  const file = uploadedFiles[0];
+                  if (!file) return;
+                  
+                  const fileName = file.name.toLowerCase();
+                  if (!fileName.endsWith('.pdf') && file.type !== 'application/pdf') {
+                    setError("请上传 PDF 文件");
+                    return;
+                  }
+                  
                   handleConvert(format.id);
                 }
               }}
@@ -266,9 +410,15 @@ export default function AdobeOCRConverter() {
                       ? "bg-green-100 dark:bg-green-900/30"
                       : format.color === "purple"
                       ? "bg-purple-100 dark:bg-purple-900/30"
-                      : format.color === "pink"
+                      :                     format.color === "pink"
                       ? "bg-pink-100 dark:bg-pink-900/30"
-                      : "bg-cyan-100 dark:bg-cyan-900/30"
+                      : format.color === "cyan"
+                      ? "bg-cyan-100 dark:bg-cyan-900/30"
+                      : format.color === "indigo"
+                      ? "bg-indigo-100 dark:bg-indigo-900/30"
+                      : format.color === "teal"
+                      ? "bg-teal-100 dark:bg-teal-900/30"
+                      : "bg-gray-100 dark:bg-gray-900/30"
                   }`}
                 >
                   <Icon className="w-8 h-8" />
@@ -344,6 +494,7 @@ export default function AdobeOCRConverter() {
           <li>Adobe API 提供高质量的 OCR 和转换服务</li>
           <li>OCR 功能可将扫描的 PDF 转换为可搜索的文档</li>
           <li>支持将 PDF 转换为 Word、PowerPoint、Excel、RTF、图片等格式</li>
+          <li>支持将 Word、Office 文档转换为 PDF</li>
           <li>需要配置 Adobe API 凭证才能使用</li>
         </ul>
       </div>

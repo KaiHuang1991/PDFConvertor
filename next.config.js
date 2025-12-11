@@ -11,13 +11,9 @@ const nextConfig = {
     // 优化 App Router
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },
-  // Turbopack 配置（Next.js 16+）
-  turbopack: {
-    resolveAlias: {
-      canvas: false,
-    },
-  },
-  // 兼容 webpack（如果使用 --webpack 标志）
+  // 添加空的 turbopack 配置以强制使用 webpack
+  turbopack: {},
+  // Webpack 配置（强制使用 webpack 而不是 Turbopack）
   webpack: (config, { isServer }) => {
     config.resolve.alias = {
       ...config.resolve.alias,
@@ -31,6 +27,9 @@ const nextConfig = {
         net: false,
         tls: false,
       };
+      // 确保 Adobe SDK 不会被打包到客户端
+      config.resolve.alias['@adobe/pdfservices-node-sdk'] = false;
+      config.resolve.alias['lib/adobe-pdf-services'] = false;
     }
     // 支持Tesseract.js
     config.experiments = {
