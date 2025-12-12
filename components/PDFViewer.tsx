@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Search, RotateCw, ZoomIn, ZoomOut, Loader2, Maximize, ChevronLeft, ChevronRight, Upload } from "lucide-react";
+import { Search, RotateCw, ZoomIn, ZoomOut, Loader2, Maximize, ChevronLeft, ChevronRight, Upload, Download } from "lucide-react";
 
 interface TextMatch {
   page: number;
@@ -142,6 +142,8 @@ export default function PDFViewer() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<TextMatch[]>([]);
   const [searching, setSearching] = useState(false);
+  const [matchCase, setMatchCase] = useState(false); // 区分大小写
+  const [wholeWords, setWholeWords] = useState(false); // 整词匹配
   const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string>("");
   const [highlights, setHighlights] = useState<Map<number, HighlightRect[]>>(new Map());
@@ -316,22 +318,28 @@ export default function PDFViewer() {
 
     // 关键：完全复制 pdfCanvas 的所有尺寸属性
     // 1. 同步设备像素尺寸（最重要！）
+    // 确保与PDF canvas完全一致（包括四舍五入）
     hlCanvas.width = pdfCanvas.width;
     hlCanvas.height = pdfCanvas.height;
 
     // 2. 同步 CSS 显示尺寸（让它看起来一样大）
-    // 优先使用 pdfCanvas 的 style.width/height（如果已设置）
-    // 否则使用 offsetWidth/offsetHeight（更保险）
+    // 确保两个canvas的显示尺寸完全一致
     if (pdfCanvas.style.width && pdfCanvas.style.height) {
       hlCanvas.style.width = pdfCanvas.style.width;
       hlCanvas.style.height = pdfCanvas.style.height;
     } else {
+      // 使用offsetWidth/offsetHeight获取实际显示尺寸
       hlCanvas.style.width = `${pdfCanvas.offsetWidth}px`;
       hlCanvas.style.height = `${pdfCanvas.offsetHeight}px`;
     }
 
     // 3. 清除可能残留的 transform，确保坐标系统一致
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    
+    // 【调试】输出同步信息
+    console.log(`[同步Canvas] PDF: ${pdfCanvas.width}x${pdfCanvas.height}, 高亮: ${hlCanvas.width}x${hlCanvas.height}`);
+    console.log(`[同步Canvas] PDF样式: ${pdfCanvas.style.width || pdfCanvas.offsetWidth}x${pdfCanvas.style.height || pdfCanvas.offsetHeight}`);
+    console.log(`[同步Canvas] 高亮样式: ${hlCanvas.style.width}x${hlCanvas.style.height}`);
   };
 
   const renderPage = async (pageNumber: number, pdfDoc: any, zoom = scale, rotate = rotation) => {
@@ -345,8 +353,11 @@ export default function PDFViewer() {
       setRendering(false);
       return;
     }
-    canvas.height = viewport.height;
-    canvas.width = viewport.width;
+    // 【关键修复】确保Canvas尺寸与Viewport完全一致
+    // viewport.width/height 可能包含小数，但Canvas width/height必须是整数
+    // 使用 Math.round 确保一致性
+    canvas.height = Math.round(viewport.height);
+    canvas.width = Math.round(viewport.width);
 
     if (renderTaskRef.current) {
       renderTaskRef.current.cancel();
@@ -432,6 +443,16 @@ export default function PDFViewer() {
         highlightLayer.width = pdfCanvas.width;
         highlightLayer.height = pdfCanvas.height;
       }
+      
+      // 【调试】输出canvas尺寸信息
+      console.log(`[绘制高亮] Canvas尺寸检查:`);
+      console.log(`[绘制高亮]   PDF Canvas: width=${pdfCanvas.width}, height=${pdfCanvas.height}`);
+      console.log(`[绘制高亮]   PDF Canvas style: width=${pdfCanvas.style.width || '未设置'}, height=${pdfCanvas.style.height || '未设置'}`);
+      console.log(`[绘制高亮]   PDF Canvas offset: width=${pdfCanvas.offsetWidth}, height=${pdfCanvas.offsetHeight}`);
+      console.log(`[绘制高亮]   高亮 Canvas: width=${highlightLayer.width}, height=${highlightLayer.height}`);
+      console.log(`[绘制高亮]   高亮 Canvas style: width=${highlightLayer.style.width || '未设置'}, height=${highlightLayer.style.height || '未设置'}`);
+      console.log(`[绘制高亮]   高亮 Canvas offset: width=${highlightLayer.offsetWidth}, height=${highlightLayer.offsetHeight}`);
+      console.log(`[绘制高亮]   Viewport: width=${viewport.width}, height=${viewport.height}`);
     }
 
     // 清除之前的高亮
@@ -446,24 +467,71 @@ export default function PDFViewer() {
     // 使用更浅的黄色和更低的透明度，确保文字清晰可见
     ctx.fillStyle = "rgba(255, 240, 0, 0.35)"; // 浅黄色，35%透明度（文字清晰可见，颜色更柔和）
 
-    for (const rect of pageHighlights) {
-      // 【关键修复】不添加偏移，直接使用计算出的精确坐标
-      // 如果坐标计算准确，就不需要额外的偏移调整
-      const x = rect.x;
-      const y = rect.y;
-      const width = rect.width;
-      const height = rect.height;
+    // 启用抗锯齿以获得更平滑的边缘
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+
+    for (let i = 0; i < pageHighlights.length; i++) {
+      const rect = pageHighlights[i];
+      
+      // 【调试】输出绘制信息
+      console.log(`[绘制高亮] 矩形 ${i + 1}/${pageHighlights.length}:`, {
+        原始: { x: rect.x.toFixed(2), y: rect.y.toFixed(2), width: rect.width.toFixed(2), height: rect.height.toFixed(2) }
+      });
+      
+      // 【关键修复】使用精确坐标，确保是整数像素
+      // 由于在计算时已经使用了 Math.floor，这里直接使用即可
+      // 但为了安全，再次确保坐标在边界内
+      let x = Math.floor(rect.x);
+      let y = Math.floor(rect.y);
+      let width = Math.max(1, Math.floor(rect.width));
+      let height = Math.max(1, Math.floor(rect.height));
+      
+      // 【关键修复】最终边界裁剪，确保不超出Canvas
+      const canvasWidth = highlightLayer.width;
+      const canvasHeight = highlightLayer.height;
+      
+      if (x < 0) {
+        width += x; // 减少宽度
+        x = 0;
+      }
+      if (y < 0) {
+        height += y; // 减少高度
+        y = 0;
+      }
+      if (x + width > canvasWidth) {
+        width = Math.max(1, canvasWidth - x);
+      }
+      if (y + height > canvasHeight) {
+        height = Math.max(1, canvasHeight - y);
+      }
+      
+      // 确保最终值有效
+      if (width <= 0 || height <= 0 || x < 0 || y < 0 || x + width > canvasWidth || y + height > canvasHeight) {
+        console.warn(`[绘制高亮] ⚠️ 矩形无效或超出边界，跳过绘制`, {
+          x, y, width, height,
+          canvasWidth, canvasHeight
+        });
+        continue; // 跳过这个矩形
+      }
+      
+      // 【调试】输出最终绘制坐标
+      console.log(`[绘制高亮] 绘制坐标: x=${x}, y=${y}, width=${width}, height=${height}`);
+      console.log(`[绘制高亮] Canvas边界检查: x在[0, ${canvasWidth}], y在[0, ${canvasHeight}]`);
       
       // 使用 roundRect（现代浏览器支持）绘制圆角矩形，更美观且边缘更清晰
       // 如果不支持，降级到 fillRect
       if (ctx.roundRect) {
-        ctx.roundRect(x, y, width, height, 3);  // 3px圆角，更美观
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, 2);  // 2px圆角，更贴合文字
         ctx.fill();
       } else {
         // 兼容方案：使用 fillRect
       ctx.fillRect(x, y, width, height);
       }
     }
+    
+    console.log(`[绘制高亮] 完成绘制 ${pageHighlights.length} 个高亮矩形`);
   };
 
 
@@ -890,116 +958,432 @@ export default function PDFViewer() {
       let usingCharLevelInfo = false; // 标记是否使用了字符级别信息
       
       // 检查是否有字符级别的信息
-      if (item.chars && Array.isArray(item.chars) && item.chars.length > 0) {
+      if (item.chars && Array.isArray(item.chars) && item.chars.length > 0 && item.chars.length === str.length) {
         usingCharLevelInfo = true;
-        // 【最准确方法】使用每个字符的实际宽度
-        // 遍历搜索词之前的每个字符
+        
+        // 【最准确方法】使用每个字符的实际位置和宽度
+        // 字符级别信息可以提供每个字符的精确 transform 和 width
+        
+        // 获取起始字符和结束字符的实际位置
+        const startCharInfo = item.chars[startChar];
+        const endCharInfo = item.chars[endChar - 1];
+        
+        if (startCharInfo && endCharInfo) {
+          // 方法1：使用字符的 transform[4]（x坐标）直接获取位置
+          // 【重要】需要确认：字符的transform[4]是相对于文本块的还是PDF页面的？
+          // PDF.js文档显示，字符transform通常是相对于文本块的
+          if (startCharInfo.transform && endCharInfo.transform) {
+            const startCharTransform = startCharInfo.transform;
+            const endCharTransform = endCharInfo.transform;
+            
+            // 【关键修复】字符的transform[4]是相对于文本块起始位置的偏移
+            // 所以 offsetX = 字符transform[4]（相对偏移）
+            // 但需要验证这是否正确，有些PDF可能是绝对坐标
+            
+            // 尝试两种方法，选择更合理的：
+            // 方法A：假设字符transform是相对偏移
+            const relativeOffsetX = startCharTransform[4];
+            const relativeEndX = endCharTransform[4];
+            
+            // 方法B：尝试作为绝对坐标（如果transform[4]很大，可能是绝对坐标）
+            // 如果字符的transform[4]接近item的transform[4]，说明是绝对坐标
+            const isAbsolute = Math.abs(startCharTransform[4] - transform[4]) < Math.abs(transform[4]) * 0.1;
+            
+            if (isAbsolute) {
+              // 绝对坐标：直接使用
+              offsetX = startCharTransform[4] - transform[4];
+              const endCharWidth = endCharInfo.width || Math.abs(endCharTransform[0]) || charWidth;
+              matchWidth = (endCharTransform[4] + endCharWidth) - startCharTransform[4];
+              console.log(`[高亮计算] 使用绝对坐标模式`);
+            } else {
+              // 相对坐标：字符transform[4]是相对于文本块的偏移
+              offsetX = relativeOffsetX;
+              const endCharWidth = endCharInfo.width || Math.abs(endCharTransform[0]) || charWidth;
+              matchWidth = (relativeEndX + endCharWidth) - relativeOffsetX;
+              console.log(`[高亮计算] 使用相对坐标模式 (offsetX=${offsetX.toFixed(2)})`);
+            }
+          } 
+          // 方法2：如果没有transform，累加宽度
+          else {
+            // 累加起始字符之前的宽度
         for (let i = 0; i < startChar && i < item.chars.length; i++) {
           const charInfo = item.chars[i];
-          let actualCharWidth: number;
-          
           if (charInfo && charInfo.width) {
-            // 优先使用字符的实际宽度
-            actualCharWidth = charInfo.width;
+                offsetX += charInfo.width;
           } else if (charInfo && charInfo.transform) {
-            // 如果没有width，使用字符的transform[0]（水平缩放因子）
-            actualCharWidth = Math.abs(charInfo.transform[0]);
+                offsetX += Math.abs(charInfo.transform[0]);
         } else {
-            // 回退到平均宽度
-            actualCharWidth = charWidth;
+                offsetX += charWidth;
           }
-          
-          offsetX += actualCharWidth;
         }
         
-        // 遍历搜索词的每个字符
+            // 累加匹配文本的宽度
         for (let i = startChar; i < endChar && i < item.chars.length; i++) {
           const charInfo = item.chars[i];
-          let actualCharWidth: number;
-          
           if (charInfo && charInfo.width) {
-            actualCharWidth = charInfo.width;
+                matchWidth += charInfo.width;
           } else if (charInfo && charInfo.transform) {
-            actualCharWidth = Math.abs(charInfo.transform[0]);
+                matchWidth += Math.abs(charInfo.transform[0]);
         } else {
-            actualCharWidth = charWidth;
+                matchWidth += charWidth;
+              }
+            }
           }
-          
-          matchWidth += actualCharWidth;
+        } else {
+          // 如果字符索引不匹配，回退到平均宽度
+          offsetX = charWidth * startChar;
+          matchWidth = charWidth * (endChar - startChar);
+          usingCharLevelInfo = false;
         }
       } else {
         // 【备用方法】如果没有字符级别信息，使用改进的平均宽度计算
-        // 问题：简单的平均宽度对于变宽字体可能不准确
-        // 改进：考虑字符的实际宽度分布，使用更精确的估算
+        // 改进：尝试从文本内容计算更准确的宽度
         
-        // 分析：item.width是实际测量的总宽度，包含了所有字符的实际宽度和间距
-        // 对于变宽字体，每个字符的宽度可能不同，但平均宽度仍然是最接近实际的方法
-        
-        // 直接使用平均宽度计算
+        // 如果 width 可用，使用实际测量的宽度
+        if (width && str.length > 0) {
+          // 使用平均宽度，但考虑实际文本长度
+          const actualCharWidth = width / str.length;
+          
+          // 计算匹配文本部分在实际文本中的比例
+          const matchSubstring = str.substring(startChar, endChar);
+          const prefixSubstring = str.substring(0, startChar);
+          
+          // 使用实际宽度比例来计算
+          // 假设字符宽度相对均匀，使用比例更准确
+          offsetX = (prefixSubstring.length / str.length) * width;
+          matchWidth = (matchSubstring.length / str.length) * width;
+        } else {
+          // 如果没有 width，使用 transform 估算
         offsetX = charWidth * startChar;
         matchWidth = charWidth * (endChar - startChar);
-        
-        // 【调试】输出计算详情，帮助分析问题
-        console.log(`[高亮计算] 平均宽度计算详情:`, {
-          itemWidth: width,
-          strLength: str.length,
-          charWidth: charWidth,
-          startChar: startChar,
-          endChar: endChar,
-          offsetX: offsetX,
-          matchWidth: matchWidth,
-          expectedTotalWidth: charWidth * str.length,
-          actualItemWidth: width,
-          difference: Math.abs(charWidth * str.length - width)
-        });
+        }
       }
       
+      // 【关键理解】PDF坐标系说明：
+      // - transform[4] 和 transform[5] 是文本块在PDF页面坐标系中的位置
+      // - transform[4] = x坐标（水平位置）
+      // - transform[5] = y坐标（垂直位置，PDF坐标系y向上）
+      // - 字符的 transform[4]（如果有）是相对于文本块的，还是PDF页面的？需要验证！
+      
       // PDF坐标系中的位置
-      // transform[4] 是整个文本块的起始位置
+      // transform[4] 是整个文本块的起始位置（PDF页面坐标系）
       // offsetX 是从文本块起始位置到匹配文本起始位置的偏移
       const x = transform[4] + offsetX;
       
       // 【调试】输出关键计算信息
       const matchText = str.substring(startChar, endChar);
+      console.log(`[高亮计算] ========== 开始计算高亮 ==========`);
       console.log(`[高亮计算] 匹配文本: "${matchText}"`);
       console.log(`[高亮计算] item.str: "${str}"`);
       console.log(`[高亮计算] startChar: ${startChar}, endChar: ${endChar}`);
-      console.log(`[高亮计算] transform[4]: ${transform[4]}, transform[5]: ${transform[5]}`);
+      console.log(`[高亮计算] 文本块transform: [${transform.join(', ')}]`);
+      console.log(`[高亮计算] transform[4] (item.x): ${transform[4]}, transform[5] (item.y): ${transform[5]}`);
       console.log(`[高亮计算] item.width: ${width}, str.length: ${str.length}`);
       console.log(`[高亮计算] charWidth: ${charWidth}`);
-      console.log(`[高亮计算] offsetX: ${offsetX}, matchWidth: ${matchWidth}`);
-      console.log(`[高亮计算] 最终x: ${x}`);
+      console.log(`[高亮计算] offsetX: ${offsetX.toFixed(2)}, matchWidth: ${matchWidth.toFixed(2)}`);
+      console.log(`[高亮计算] PDF坐标 - x: ${x.toFixed(2)}`);
+      console.log(`[高亮计算] 文本块总宽度: ${width.toFixed(2)}, 匹配文本占比: ${((matchWidth / width) * 100).toFixed(1)}%`);
+      
+      // 如果有字符级别信息，输出字符坐标
+      if (usingCharLevelInfo && item.chars && item.chars[startChar] && item.chars[startChar].transform) {
+        const charTransform = item.chars[startChar].transform;
+        console.log(`[高亮计算] 起始字符transform: [${charTransform.join(', ')}]`);
+        console.log(`[高亮计算] 起始字符transform[4] (字符x): ${charTransform[4]}`);
+        console.log(`[高亮计算] 字符x vs item.x: ${charTransform[4]} vs ${transform[4]}`);
+        console.log(`[高亮计算] 差异: ${charTransform[4] - transform[4]}`);
+      }
+      
       console.log(`[高亮计算] 使用字符级别信息: ${usingCharLevelInfo ? '是' : '否（使用平均宽度）'}`);
       
       const baselineY = transform[5];  // 基线位置（PDF坐标系，y向上）
       
+      // 【关键】检测文本是否旋转（通过transform矩阵）
+      // transform = [a, b, c, d, e, f]
+      // 如果 b != 0 或 c != 0，说明文本有旋转
+      const isRotated = Math.abs(transform[1]) > 0.001 || Math.abs(transform[2]) > 0.001;
+      const rotationAngle = isRotated ? Math.atan2(transform[1], transform[0]) * 180 / Math.PI : 0;
+      console.log(`[高亮计算] 文本旋转检测: ${isRotated ? '是' : '否'}, 角度: ${rotationAngle.toFixed(1)}°`);
+      
       // 关键修正：适配中英文字体的ascent/descent
-      // 中文字体（宋体、黑体等）通常 ascent 更高，descent 较小
-      // 英文字体 ascent/descent 相对平均
-      // 使用经验值：适配大部分中英文混合PDF
-      const ascent = 0.88;    // 字体上升部分比例（中文字体通常需要更大的ascent）
-      const descent = -0.15;  // 字体下降部分比例（中文字符基本没有下降部分）
+      // 尝试从 item 中获取字体信息，如果没有则使用经验值
+      let ascent = 0.88;    // 默认字体上升部分比例
+      let descent = -0.15;  // 默认字体下降部分比例
+      
+      // 如果 item 中有字体信息，尝试使用
+      if (item.fontName) {
+        const fontName = item.fontName.toLowerCase();
+        // 中文字体通常 ascent 更高
+        if (fontName.includes('sim') || fontName.includes('microsoft') || fontName.includes('song') || fontName.includes('hei')) {
+          ascent = 0.90;
+          descent = -0.12;
+        }
+      }
+      
+      // 如果有字符级别的信息，使用第一个字符的高度信息
+      if (item.chars && item.chars.length > 0 && startChar < item.chars.length) {
+        const charInfo = item.chars[startChar];
+        if (charInfo && charInfo.height) {
+          // 使用字符的实际高度
+          const charHeight = charInfo.height;
+          // 通常 ascent 占高度的 80-90%，descent 占 10-20%
+          const calculatedAscent = charHeight * 0.85;
+          const calculatedDescent = -charHeight * 0.15;
+          ascent = calculatedAscent / fontSize;
+          descent = calculatedDescent / fontSize;
+        }
+      }
       
       // 关键修正：正确计算文本的顶部和底部
       // yTop: 基线 + 上升部分（PDF坐标系y向上，所以加法得到顶部）
       // yBottom: 基线 + 下降部分（因为descent是负值，所以实际上是向下）
-      const yTop = baselineY + fontSize * ascent;    // 文本顶部（最高点）
-      const yBottom = baselineY + fontSize * descent; // 文本底部（最低点，因为descent是负值）
+      let yTop = baselineY + fontSize * ascent;    // 文本顶部（最高点）
+      let yBottom = baselineY + fontSize * descent; // 文本底部（最低点，因为descent是负值）
+      
+      // 【关键修复】对于旋转文本，需要根据旋转角度调整计算方式
+      // 如果文本旋转了90度或270度，x和y的对应关系会改变
+      if (isRotated) {
+        // 对于旋转文本，可能需要使用不同的计算方法
+        // 但先尝试标准的转换，看是否有效
+        console.log(`[高亮计算] 旋转文本处理: transform[1]=${transform[1]}, transform[2]=${transform[2]}`);
+        
+        // 如果是90度旋转（transform[1] > 0），文本是从上到下
+        // 如果是-90度旋转（transform[1] < 0），文本是从下到上
+        // 对于旋转文本，可能需要交换宽度和高度的计算
+      }
 
-      // 四个角点转换到viewport坐标（完美支持任意旋转）
-      const p1 = viewport.convertToViewportPoint(x, yTop);           // 左上角（顶部左）
-      const p2 = viewport.convertToViewportPoint(x + matchWidth, yTop); // 右上角（顶部右）
-      const p3 = viewport.convertToViewportPoint(x, yBottom);        // 左下角（底部左）
-      const p4 = viewport.convertToViewportPoint(x + matchWidth, yBottom); // 右下角（底部右）
+      // 【关键】四个角点转换到viewport坐标（完美支持任意旋转）
+      // viewport.convertToViewportPoint 将PDF坐标转换为canvas坐标
+      // 注意：对于旋转文本，需要使用transform矩阵来计算正确的角点
+      // isRotated 变量已在上面声明（第1088行），这里直接使用
+      
+      console.log(`[高亮计算] 文本是否旋转: ${isRotated}, transform矩阵: [${transform[0]}, ${transform[1]}, ${transform[2]}, ${transform[3]}]`);
+      
+      let p1: [number, number], p2: [number, number], p3: [number, number], p4: [number, number];
+      
+      if (isRotated) {
+        // 【旋转文本】使用transform矩阵计算匹配文本的四个角点
+        // transform = [a, b, c, d, e, f]
+        // 对于旋转90度的文本：[0, 18, -18, 0, e, f]
+        // transform[0,1] = [0, 18] 是文本宽度方向（垂直向上）
+        // transform[2,3] = [-18, 0] 是文本高度方向（水平向左）
+        
+        // 【关键】计算文本块的高度（字符高度）
+        // 对于旋转文本，高度方向是 transform[2,3]，我们需要计算高度方向向量长度
+        const heightDirectionLength = Math.sqrt(transform[2] * transform[2] + transform[3] * transform[3]);
+        const textBlockHeight = fontSize * (ascent - descent);
+        
+        console.log(`[高亮计算] 旋转文本计算参数:`);
+        console.log(`[高亮计算]   offsetX: ${offsetX.toFixed(2)}, matchWidth: ${matchWidth.toFixed(2)}`);
+        console.log(`[高亮计算]   textBlockHeight: ${textBlockHeight.toFixed(2)}`);
+        console.log(`[高亮计算]   高度方向向量长度: ${heightDirectionLength.toFixed(2)}`);
+        console.log(`[高亮计算]   transform[0,1]: [${transform[0]}, ${transform[1]}] (宽度方向)`);
+        console.log(`[高亮计算]   transform[2,3]: [${transform[2]}, ${transform[3]}] (高度方向)`);
+        
+        // 【关键修复】对于旋转文本，offsetX和matchWidth的单位转换
+        // 问题：offsetX和matchWidth是基于item.width计算的，但item.width是文本块在文本宽度方向的总长度
+        // 对于旋转90度的文本，transform[0,1] = [0, 18] 表示每个字符在宽度方向上移动18个单位
+        // 但是，offsetX和matchWidth已经是基于width的比例计算的，所以它们已经是正确的单位了
+        
+        // 【关键】计算文本宽度方向的单位向量长度（字符宽度）
+        const widthDirectionLength = Math.sqrt(transform[0] * transform[0] + transform[1] * transform[1]);
+        console.log(`[高亮计算]   宽度方向向量长度: ${widthDirectionLength.toFixed(2)}`);
+        console.log(`[高亮计算]   文本块总宽度: ${width.toFixed(2)}, 字符数: ${str.length}`);
+        
+        // 【关键理解】对于旋转文本：
+        // - offsetX和matchWidth是基于width的比例计算的，单位是"文本宽度方向的单位"
+        // - transform[0,1] = [0, 18] 表示宽度方向的单位向量，长度是18
+        // - 但是，当我们用 transform[1] * matchWidth 时，我们实际上是在计算 18 * matchWidth
+        // - 这是错误的！因为matchWidth已经是正确的单位了，不需要再乘以18
+        
+        // 【关键修复】对于旋转文本，offsetX和matchWidth已经是正确的单位
+        // 但是，我们需要将它们转换为在transform坐标系中的正确偏移
+        // 方法：直接使用offsetX和matchWidth，因为它们已经是基于width的比例计算的
+        
+        // 底部起始点（基线）：文本块起始位置 + 宽度方向偏移
+        // 注意：offsetX已经是基于width的比例，所以直接使用即可
+        const matchBottomStartX = transform[4] + (transform[0] / widthDirectionLength) * offsetX;
+        const matchBottomStartY = transform[5] + (transform[1] / widthDirectionLength) * offsetX;
+        
+        // 底部结束点（基线）：文本块起始位置 + 宽度方向偏移 + 匹配文本宽度
+        // 注意：matchWidth已经是基于width的比例，所以直接使用即可
+        const matchBottomEndX = transform[4] + (transform[0] / widthDirectionLength) * (offsetX + matchWidth);
+        const matchBottomEndY = transform[5] + (transform[1] / widthDirectionLength) * (offsetX + matchWidth);
+        
+        console.log(`[高亮计算]   使用offsetX: ${offsetX.toFixed(2)}, matchWidth: ${matchWidth.toFixed(2)}`);
+        
+        // 【调试】验证计算
+        const bottomLength = Math.sqrt(
+          Math.pow(matchBottomEndX - matchBottomStartX, 2) + 
+          Math.pow(matchBottomEndY - matchBottomStartY, 2)
+        );
+        console.log(`[高亮计算]   底部长度验证: ${bottomLength.toFixed(2)} (期望: ${matchWidth.toFixed(2)})`);
+        
+        // 【关键修复】顶部起始点（基线 + 高度方向）：底部起始点 + 高度方向偏移
+        // 对于旋转文本，高度方向是 transform[2,3]，我们需要使用单位向量
+        // textBlockHeight 是字符高度，需要转换为在高度方向上的正确偏移
+        const heightOffset = textBlockHeight; // 字符高度
+        const matchTopStartX = matchBottomStartX + (transform[2] / heightDirectionLength) * heightOffset;
+        const matchTopStartY = matchBottomStartY + (transform[3] / heightDirectionLength) * heightOffset;
+        
+        // 顶部结束点：底部结束点 + 高度方向偏移
+        const matchTopEndX = matchBottomEndX + (transform[2] / heightDirectionLength) * heightOffset;
+        const matchTopEndY = matchBottomEndY + (transform[3] / heightDirectionLength) * heightOffset;
+        
+        // 【调试】验证高度计算
+        const heightLength = Math.sqrt(
+          Math.pow(matchTopStartX - matchBottomStartX, 2) + 
+          Math.pow(matchTopStartY - matchBottomStartY, 2)
+        );
+        console.log(`[高亮计算]   高度长度验证: ${heightLength.toFixed(2)} (期望: ${textBlockHeight.toFixed(2)})`);
+        
+        console.log(`[高亮计算] 旋转文本 - 使用transform矩阵直接计算匹配文本角点:`);
+        console.log(`[高亮计算]   底部起始: (${matchBottomStartX.toFixed(2)}, ${matchBottomStartY.toFixed(2)})`);
+        console.log(`[高亮计算]   底部结束: (${matchBottomEndX.toFixed(2)}, ${matchBottomEndY.toFixed(2)})`);
+        console.log(`[高亮计算]   底部长度: ${Math.sqrt(Math.pow(matchBottomEndX - matchBottomStartX, 2) + Math.pow(matchBottomEndY - matchBottomStartY, 2)).toFixed(2)}`);
+        console.log(`[高亮计算]   顶部起始: (${matchTopStartX.toFixed(2)}, ${matchTopStartY.toFixed(2)})`);
+        console.log(`[高亮计算]   顶部结束: (${matchTopEndX.toFixed(2)}, ${matchTopEndY.toFixed(2)})`);
+        
+        // 转换到viewport坐标
+        p1 = viewport.convertToViewportPoint(matchTopStartX, matchTopStartY);     // 顶部起始
+        p2 = viewport.convertToViewportPoint(matchTopEndX, matchTopEndY);         // 顶部结束
+        p3 = viewport.convertToViewportPoint(matchBottomStartX, matchBottomStartY); // 底部起始
+        p4 = viewport.convertToViewportPoint(matchBottomEndX, matchBottomEndY);     // 底部结束
+      } else {
+        // 【非旋转文本】使用简单的矩形计算
+        // PDF坐标系中的匹配文本位置
+        const matchX = transform[4] + offsetX;  // 文本块的x + 偏移
+        const matchYTop = yTop;    // 文本顶部
+        const matchYBottom = yBottom; // 文本底部
+        
+        console.log(`[高亮计算] 非旋转文本 - 简单矩形计算:`);
+        console.log(`[高亮计算]   matchX: ${matchX.toFixed(2)}, matchWidth: ${matchWidth.toFixed(2)}`);
+        console.log(`[高亮计算]   matchYTop: ${matchYTop.toFixed(2)}, matchYBottom: ${matchYBottom.toFixed(2)}`);
+        
+        // 【关键修复】对于非旋转文本，尝试使用字符级别信息提高精度
+        // 即使之前检测到字符级别信息不可用，也可能在某些情况下部分可用
+        if (item.chars && item.chars.length > 0 && startChar < item.chars.length && endChar <= item.chars.length) {
+          // 尝试使用字符级别的信息来更精确地计算
+          let preciseOffsetX = 0;
+          let preciseMatchWidth = 0;
+          let usingPreciseCalc = false;
+          
+          // 累加起始字符之前的宽度
+          for (let i = 0; i < startChar && i < item.chars.length; i++) {
+            const charInfo = item.chars[i];
+            if (charInfo && charInfo.width) {
+              preciseOffsetX += charInfo.width;
+              usingPreciseCalc = true;
+            } else if (charInfo && charInfo.transform) {
+              preciseOffsetX += Math.abs(charInfo.transform[0]);
+              usingPreciseCalc = true;
+            }
+          }
+          
+          // 累加匹配文本的宽度
+          for (let i = startChar; i < endChar && i < item.chars.length; i++) {
+            const charInfo = item.chars[i];
+            if (charInfo && charInfo.width) {
+              preciseMatchWidth += charInfo.width;
+              usingPreciseCalc = true;
+            } else if (charInfo && charInfo.transform) {
+              preciseMatchWidth += Math.abs(charInfo.transform[0]);
+              usingPreciseCalc = true;
+            }
+          }
+          
+          if (usingPreciseCalc && preciseMatchWidth > 0) {
+            console.log(`[高亮计算]   使用字符级别精确计算: offsetX=${preciseOffsetX.toFixed(2)}, matchWidth=${preciseMatchWidth.toFixed(2)}`);
+            const preciseMatchX = transform[4] + preciseOffsetX;
+            p1 = viewport.convertToViewportPoint(preciseMatchX, matchYTop);                    // 左上
+            p2 = viewport.convertToViewportPoint(preciseMatchX + preciseMatchWidth, matchYTop);       // 右上
+            p3 = viewport.convertToViewportPoint(preciseMatchX, matchYBottom);                 // 左下
+            p4 = viewport.convertToViewportPoint(preciseMatchX + preciseMatchWidth, matchYBottom);   // 右下
+          } else {
+            // 回退到平均宽度计算
+            p1 = viewport.convertToViewportPoint(matchX, matchYTop);                    // 左上
+            p2 = viewport.convertToViewportPoint(matchX + matchWidth, matchYTop);       // 右上
+            p3 = viewport.convertToViewportPoint(matchX, matchYBottom);                 // 左下
+            p4 = viewport.convertToViewportPoint(matchX + matchWidth, matchYBottom);   // 右下
+          }
+        } else {
+          // 转换到viewport坐标（四个角点）
+          p1 = viewport.convertToViewportPoint(matchX, matchYTop);                    // 左上
+          p2 = viewport.convertToViewportPoint(matchX + matchWidth, matchYTop);       // 右上
+          p3 = viewport.convertToViewportPoint(matchX, matchYBottom);                 // 左下
+          p4 = viewport.convertToViewportPoint(matchX + matchWidth, matchYBottom);   // 右下
+        }
+      }
+      
+      console.log(`[高亮计算] Viewport转换结果:`);
+      console.log(`[高亮计算]   p1 (左上/顶部起始): (${p1[0].toFixed(2)}, ${p1[1].toFixed(2)})`);
+      console.log(`[高亮计算]   p2 (右上/顶部结束): (${p2[0].toFixed(2)}, ${p2[1].toFixed(2)})`);
+      console.log(`[高亮计算]   p3 (左下/底部起始): (${p3[0].toFixed(2)}, ${p3[1].toFixed(2)})`);
+      console.log(`[高亮计算]   p4 (右下/底部结束): (${p4[0].toFixed(2)}, ${p4[1].toFixed(2)})`);
 
       const xs = [p1[0], p2[0], p3[0], p4[0]];
       const ys = [p1[1], p2[1], p3[1], p4[1]];
 
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+
+      // 确保宽度和高度不为0（至少1像素）
+      let rectWidth = Math.max(1, maxX - minX);
+      let rectHeight = Math.max(1, maxY - minY);
+      
+      // 【关键修复】裁剪到Canvas边界内
+      // 使用 Math.floor 确保坐标是整数，避免四舍五入后超出边界
+      let rectX = Math.floor(minX);
+      let rectY = Math.floor(minY);
+      
+      // 确保 x 和 y 在边界内
+      if (rectX < 0) {
+        rectWidth += rectX; // 减少宽度（rectX是负数）
+        rectX = 0;
+      }
+      if (rectY < 0) {
+        rectHeight += rectY; // 减少高度（rectY是负数）
+        rectY = 0;
+      }
+      
+      // 确保宽度和高度仍然有效
+      rectWidth = Math.max(1, Math.floor(rectWidth));
+      rectHeight = Math.max(1, Math.floor(rectHeight));
+      
+      // 确保右边界不超出
+      const canvasWidth = Math.floor(viewport.width);
+      const canvasHeight = Math.floor(viewport.height);
+      
+      if (rectX + rectWidth > canvasWidth) {
+        rectWidth = Math.max(1, canvasWidth - rectX);
+      }
+      if (rectY + rectHeight > canvasHeight) {
+        rectHeight = Math.max(1, canvasHeight - rectY);
+      }
+      
+      // 确保裁剪后仍然有效
+      if (rectWidth <= 0 || rectHeight <= 0 || rectX < 0 || rectY < 0) {
+        console.warn(`[高亮计算] ⚠️ 裁剪后矩形无效，跳过绘制`);
+        return rects; // 跳过这个矩形
+      }
+      
+      // 最终验证：确保不超出边界
+      if (rectX + rectWidth > canvasWidth || rectY + rectHeight > canvasHeight) {
+        console.warn(`[高亮计算] ⚠️ 最终验证失败，跳过绘制`);
+        return rects;
+      }
+
+      console.log(`[高亮计算] Viewport矩形（裁剪前）: x=${minX.toFixed(2)}, y=${minY.toFixed(2)}, width=${(maxX - minX).toFixed(2)}, height=${(maxY - minY).toFixed(2)}`);
+      console.log(`[高亮计算] Viewport矩形（裁剪后）: x=${rectX.toFixed(2)}, y=${rectY.toFixed(2)}, width=${rectWidth.toFixed(2)}, height=${rectHeight.toFixed(2)}`);
+      console.log(`[高亮计算] Viewport尺寸: width=${viewport.width}, height=${viewport.height}`);
+      console.log(`[高亮计算] ========== 高亮计算完成 ==========`);
+
       rects.push({
-        x: Math.min(...xs),
-        y: Math.min(...ys),
-        width: Math.max(...xs) - Math.min(...xs),
-        height: Math.max(...ys) - Math.min(...ys),
+        x: rectX,
+        y: rectY,
+        width: rectWidth,
+        height: rectHeight,
       });
     }
 
@@ -1021,6 +1405,87 @@ export default function PDFViewer() {
     return rects;
   };
 
+  /**
+   * 检查文本是否匹配（支持整词匹配和区分大小写）
+   */
+  const isTextMatch = (
+    text: string,
+    query: string,
+    matchCase: boolean,
+    wholeWords: boolean,
+    position: number
+  ): boolean => {
+    // 准备查询文本和目标文本
+    const queryText = matchCase ? query : query.toLowerCase();
+    const targetText = matchCase ? text : text.toLowerCase();
+
+    // 检查位置是否匹配
+    if (position + queryText.length > targetText.length) {
+      return false;
+    }
+
+    const matchText = targetText.substring(position, position + queryText.length);
+    
+    // 基本匹配检查
+    if (matchText !== queryText) {
+      return false;
+    }
+
+    // 整词匹配检查
+    if (wholeWords) {
+      // 检查前面是否是单词边界
+      const prevChar = position > 0 ? targetText[position - 1] : ' ';
+      const nextChar = position + queryText.length < targetText.length 
+        ? targetText[position + queryText.length] 
+        : ' ';
+      
+      // 单词边界：非字母、数字、下划线、连字符
+      const wordBoundaryRegex = /[^\w\-]/;
+      
+      const isPrevBoundary = wordBoundaryRegex.test(prevChar);
+      const isNextBoundary = wordBoundaryRegex.test(nextChar);
+      
+      return isPrevBoundary && isNextBoundary;
+    }
+
+    return true;
+  };
+
+  /**
+   * 在文本中查找所有匹配位置（支持精确匹配选项）
+   */
+  const findAllMatches = (
+    text: string,
+    query: string,
+    matchCase: boolean,
+    wholeWords: boolean
+  ): number[] => {
+    const matches: number[] = [];
+    const queryText = matchCase ? query : query.toLowerCase();
+    const targetText = matchCase ? text : text.toLowerCase();
+    
+    if (!queryText) return matches;
+
+    let searchIndex = 0;
+    while (searchIndex < targetText.length) {
+      const index = targetText.indexOf(queryText, searchIndex);
+      if (index === -1) break;
+
+      // 检查是否匹配（整词匹配检查）
+      if (isTextMatch(text, query, matchCase, wholeWords, index)) {
+        matches.push(index);
+        searchIndex = index + 1;
+      } else {
+        searchIndex = index + 1;
+      }
+    }
+
+    return matches;
+  };
+
+  /**
+   * 执行搜索（支持精确匹配选项）
+   */
   const handleSearch = async () => {
     if (!pdfInstance || !searchQuery.trim()) {
       setSearchResults([]);
@@ -1033,7 +1498,12 @@ export default function PDFViewer() {
     
     try {
       const query = searchQuery.trim();
-      const queryLower = query.toLowerCase();
+      if (!query) {
+        setSearchResults([]);
+        setHighlights(new Map());
+        return;
+      }
+
       const results: TextMatch[] = [];
       const newHighlights = new Map<number, HighlightRect[]>();
 
@@ -1042,19 +1512,27 @@ export default function PDFViewer() {
         
         // 【关键】使用终极提取方法获取真实可搜索文本（完美支持中文CID字体）
         const pageText = await extractSearchableText(page);
-        let lowerText = pageText.toLowerCase();  // 改为 let，以便在方案2中可能需要规范化
 
         // 【关键优化】先获取 textContent（只获取一次，提高性能）
+        // 启用字符级别信息以获取精确的位置和宽度
         const textContent = await page.getTextContent({
-          normalizeWhitespace: true,
-          disableCombineTextItems: false,
-          // @ts-ignore - 尝试不同的选项名称
-          includeCharInfo: true,
-          // @ts-ignore
-          includeCharBoundingBoxes: true,
-          // @ts-ignore
-          includeTextRects: true,
+          normalizeWhitespace: false, // 不规范化空白，保持原始间距
+          disableCombineTextItems: false, // 先尝试false，如果需要字符级别信息再改
+          // 注意：PDF.js 4.x 可能不支持 includeCharInfo 等选项，需要检查
         });
+        
+        // 尝试获取字符级别信息（如果PDF.js支持）
+        // 某些版本可能需要单独调用 getTextContent 多次或使用不同选项
+        let charLevelInfoAvailable = false;
+        if (textContent.items && textContent.items.length > 0) {
+          const firstItem = textContent.items[0];
+          if (firstItem && firstItem.chars && Array.isArray(firstItem.chars) && firstItem.chars.length > 0) {
+            charLevelInfoAvailable = true;
+            console.log(`[搜索] 检测到字符级别信息可用: ${firstItem.chars.length} 个字符`);
+          } else {
+            console.log(`[搜索] 字符级别信息不可用，将使用item级别的信息`);
+          }
+        }
 
         // 【核心修复】优先直接在 textContent.items 中查找匹配（最准确！）
         // 这样可以避免 extractSearchableText 和 textContent 文本对齐的问题
@@ -1069,14 +1547,12 @@ export default function PDFViewer() {
           (/[\u4e00-\u9fa5a-zA-Z0-9]/.test(textContentSample) && 
            !/[\u0000-\u001F\u007F-\u009F]/.test(textContentSample)); // 检查是否有乱码字符
 
-        let searchIndex = 0;
         let matchIndex = 0;
         const pageRects: HighlightRect[] = [];
         
         if (isTextContentUsable) {
           // 方案1：textContent.items 的文本可用，直接在其中查找（最准确！）
           // 这样完全避免了文本对齐问题
-          let currentMatchIndex = 0;
           
           for (let j = 0; j < textContent.items.length; j++) {
             const item = textContent.items[j];
@@ -1084,17 +1560,13 @@ export default function PDFViewer() {
             
             if (!itemText || itemText.length === 0) continue;
             
-            const itemTextLower = itemText.toLowerCase();
+            // 使用新的精确匹配函数查找所有匹配位置
+            const matchPositions = findAllMatches(itemText, query, matchCase, wholeWords);
             
-            // 【关键验证】确保小写转换后长度不变（某些Unicode字符可能改变长度）
-            // 如果长度变化，需要特殊处理（但这种情况很少见）
-            
-            let itemMatchStart = itemTextLower.indexOf(queryLower, 0);
-            
-            // 在这个 item 中查找所有匹配
-            while (itemMatchStart !== -1) {
-              const startChar = itemMatchStart;
-              const endChar = Math.min(itemText.length, itemMatchStart + query.length);
+            // 处理每个匹配
+            for (const matchPos of matchPositions) {
+              const startChar = matchPos;
+              const endChar = Math.min(itemText.length, matchPos + query.length);
               
               const matchingItems: Array<{ item: any; startChar: number; endChar: number }> = [
                 { item, startChar, endChar }
@@ -1106,114 +1578,80 @@ export default function PDFViewer() {
               
               // 添加搜索结果（用于预览）
               const preview = itemText.substring(
-                Math.max(0, itemMatchStart - 30),
-                Math.min(itemText.length, itemMatchStart + query.length + 30)
+                Math.max(0, matchPos - 30),
+                Math.min(itemText.length, matchPos + query.length + 30)
               );
               results.push({ page: i, preview, matchIndex: matchIndex++ });
-              
-              currentMatchIndex++;
-              itemMatchStart = itemTextLower.indexOf(queryLower, itemMatchStart + 1);
             }
           }
         } else {
           // 方案2：textContent.items 是乱码，使用 extractSearchableText 的结果（中文PDF）
+          // 使用精确匹配函数查找所有匹配
+          const matchPositions = findAllMatches(pageText, query, matchCase, wholeWords);
           
-          // 【关键修复】构建 textContent 的完整文本
-          // 
-          // 问题分析：
-          // 1. extractSearchableText 可能使用两种方式：
-          //    - 方式1：textContent.items.join("") - 没有空格，直接连接
-          //    - 方式2：operatorList 提取 - 保留了原始格式（空格、换行等）
-          // 2. 如果使用了方式2，两个文本结构不一致，导致字符位置无法对齐
-          //
-          // 解决方案：
-          // 检测 extractSearchableText 使用了哪种方式，然后确保 textContentText 使用相同方式
-          // 如果使用了方式1，我们用 join("")
-          // 如果使用了方式2（operatorList），我们也需要想办法保持一致
-          //
-          // 但这里有个问题：如果 textContent.items[].str 是乱码，我们无法用它来构建准确的文本
-          // 所以，最好的方法是：确保 extractSearchableText 始终使用方式1（textContent.items）
-          // 这样两个文本就能完全一致
-          
-          // 检测：如果 pageText 和 textContent.items 构建的文本长度相近，说明使用了方式1
+          // 构建 textContent 的完整文本（用于定位）
           const textContentText = textContent.items
             .map((item: any) => item.str || "")
             .join("");
-          const textContentTextLower = textContentText.toLowerCase();
           
-          // 检查是否使用了 operatorList（方式2）
-          const usesOperatorList = Math.abs(pageText.length - textContentText.length) / Math.max(pageText.length, textContentText.length, 1) > 0.3;
-          
-          // 【关键修复】检测并处理文本结构不一致的问题
-          // 如果使用了 operatorList，文本结构可能不一致，但继续执行
-          
-          while ((searchIndex = lowerText.indexOf(queryLower, searchIndex)) !== -1) {
-            // 计算这是第几个匹配（从 lowerText 中）
-            let matchCount = 0;
-            let tempIndex = 0;
-            while (tempIndex < searchIndex && (tempIndex = lowerText.indexOf(queryLower, tempIndex + 1)) !== -1) {
-              matchCount++;
-            }
-
-            // 在 textContentText 中查找第 matchCount 个匹配
-            let currentMatchIndex = 0;
-            let textContentMatchPos = -1;
-            let textContentSearchIndex = 0;
-            
-            while ((textContentSearchIndex = textContentTextLower.indexOf(queryLower, textContentSearchIndex)) !== -1) {
-              if (currentMatchIndex === matchCount) {
-                textContentMatchPos = textContentSearchIndex;
-              break;
-            }
-              currentMatchIndex++;
-              textContentSearchIndex += query.length;
-            }
-
-            // 精确计算在哪个 item 中
-            const matchingItems: Array<{ item: any; startChar: number; endChar: number }> = [];
-            
-            if (textContentMatchPos !== -1) {
+          // 处理每个匹配位置
+          for (const matchPos of matchPositions) {
+            // 在 textContentText 中查找对应的位置
+            // 由于 textContentText 可能是乱码，我们需要通过字符位置来映射
               let accumulatedCharPos = 0;
+            let foundInItem = false;
               
               for (let j = 0; j < textContent.items.length; j++) {
                 const item = textContent.items[j];
                 const itemText = item.str || "";
                 
-                if (!itemText || itemText.length === 0) continue;
+              if (!itemText || itemText.length === 0) {
+                // 空项仍计入位置
+                accumulatedCharPos += 1;
+                continue;
+              }
                 
                 const itemStart = accumulatedCharPos;
                 const itemEnd = accumulatedCharPos + itemText.length;
                 
-                if (textContentMatchPos >= itemStart && textContentMatchPos < itemEnd) {
-                  const relativeStart = textContentMatchPos - itemStart;
-                  const relativeEnd = relativeStart + query.length;
-                  
-                  if (relativeEnd <= itemText.length) {
-                    matchingItems.push({ item, startChar: relativeStart, endChar: relativeEnd });
+              // 检查匹配是否在这个 item 的范围内
+              if (matchPos >= itemStart && matchPos < itemEnd) {
+                const relativeStart = matchPos - itemStart;
+                const relativeEnd = Math.min(itemText.length, relativeStart + query.length);
+                
+                const matchingItems: Array<{ item: any; startChar: number; endChar: number }> = [
+                  { item, startChar: relativeStart, endChar: relativeEnd }
+                ];
+                
+                // 计算高亮矩形
+                const rects = await getHighlightRects(page, matchingItems, scale, rotation);
+                pageRects.push(...rects);
+                
+                // 添加搜索结果（用于预览）
+                const preview = pageText.substring(
+                  Math.max(0, matchPos - 30),
+                  Math.min(pageText.length, matchPos + query.length + 30)
+                );
+                results.push({ page: i, preview, matchIndex: matchIndex++ });
+                
+                foundInItem = true;
                     break;
-                  } else {
-                    matchingItems.push({ item, startChar: relativeStart, endChar: itemText.length });
-                    break;
-                  }
                 }
                 
                 accumulatedCharPos = itemEnd;
+              if (j < textContent.items.length - 1) {
+                accumulatedCharPos += 1; // 项之间的分隔
               }
             }
-
-            // 计算高亮矩形（方案2的情况）
-          if (matchingItems.length > 0) {
-              const rects = await getHighlightRects(page, matchingItems, scale, rotation);
-            pageRects.push(...rects);
             
+            // 如果没找到对应的 item，仍然添加结果（可能跨多个 item）
+            if (!foundInItem) {
             const preview = pageText.substring(
-                Math.max(0, searchIndex - 30),
-                Math.min(pageText.length, searchIndex + query.length + 30)
+                Math.max(0, matchPos - 30),
+                Math.min(pageText.length, matchPos + query.length + 30)
             );
             results.push({ page: i, preview, matchIndex: matchIndex++ });
           }
-          
-          searchIndex += query.length;
           }
         }
         
@@ -1245,6 +1683,189 @@ export default function PDFViewer() {
     }
   };
 
+  // 保存并下载高亮层
+  const handleDownloadHighlights = async () => {
+    if (!canvasRef.current || !highlightLayerRef.current || !pdfInstance) {
+      alert("请先加载PDF并搜索文本");
+      return;
+    }
+
+    try {
+      const pdfCanvas = canvasRef.current;
+      const highlightCanvas = highlightLayerRef.current;
+      
+      // 创建一个新的canvas来合并PDF和高亮层
+      const mergedCanvas = document.createElement("canvas");
+      mergedCanvas.width = pdfCanvas.width;
+      mergedCanvas.height = pdfCanvas.height;
+      const ctx = mergedCanvas.getContext("2d");
+      
+      if (!ctx) {
+        alert("无法创建画布上下文");
+        return;
+      }
+
+      // 先绘制PDF内容
+      ctx.drawImage(pdfCanvas, 0, 0);
+      
+      // 再绘制高亮层（叠加）
+      ctx.drawImage(highlightCanvas, 0, 0);
+
+      // 转换为图片并下载
+      mergedCanvas.toBlob((blob) => {
+        if (!blob) {
+          alert("无法生成图片");
+          return;
+        }
+        
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${fileName ? fileName.replace('.pdf', '') : 'pdf'}_highlighted_${currentPage}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    } catch (error) {
+      console.error("下载高亮层失败:", error);
+      alert("下载失败，请重试");
+    }
+  };
+
+  // 下载所有页面的高亮层（合并为一张大图）
+  const handleDownloadAllHighlights = async () => {
+    if (!pdfInstance || highlights.size === 0) {
+      alert("请先搜索文本以生成高亮");
+      return;
+    }
+
+    try {
+      const totalPages = pdfInstance.numPages;
+      
+      // 计算总高度（所有页面）
+      let totalHeight = 0;
+      const pageCanvases: HTMLCanvasElement[] = [];
+      const highlightCanvases: HTMLCanvasElement[] = [];
+      const pageHeights: number[] = [];
+      const pageWidths: number[] = [];
+      
+      // 渲染所有页面
+      for (let i = 1; i <= totalPages; i++) {
+        const page = await pdfInstance.getPage(i);
+        const viewport = page.getViewport({ scale, rotation });
+        
+        // 创建PDF canvas
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = viewport.width;
+        pageCanvas.height = viewport.height;
+        const pageCtx = pageCanvas.getContext("2d");
+        
+        if (!pageCtx) continue;
+        
+        await page.render({ canvasContext: pageCtx, viewport }).promise;
+        pageCanvases.push(pageCanvas);
+        pageWidths.push(viewport.width);
+        pageHeights.push(viewport.height);
+        totalHeight += viewport.height;
+
+        // 创建高亮canvas
+        const highlightCanvas = document.createElement("canvas");
+        highlightCanvas.width = viewport.width;
+        highlightCanvas.height = viewport.height;
+        const highlightCtx = highlightCanvas.getContext("2d");
+        
+        if (highlightCtx) {
+          // 绘制该页的高亮
+          const pageHighlights = highlights.get(i);
+          if (pageHighlights && pageHighlights.length > 0) {
+            highlightCtx.fillStyle = "rgba(255, 240, 0, 0.35)";
+            highlightCtx.imageSmoothingEnabled = true;
+            highlightCtx.imageSmoothingQuality = "high";
+            
+            for (const rect of pageHighlights) {
+              let x = Math.floor(rect.x);
+              let y = Math.floor(rect.y);
+              let width = Math.max(1, Math.floor(rect.width));
+              let height = Math.max(1, Math.floor(rect.height));
+              
+              // 边界检查
+              if (x < 0) {
+                width += x;
+                x = 0;
+              }
+              if (y < 0) {
+                height += y;
+                y = 0;
+              }
+              if (x + width > viewport.width) {
+                width = Math.max(1, viewport.width - x);
+              }
+              if (y + height > viewport.height) {
+                height = Math.max(1, viewport.height - y);
+              }
+              
+              if (width > 0 && height > 0 && x >= 0 && y >= 0) {
+                if (highlightCtx.roundRect) {
+                  highlightCtx.beginPath();
+                  highlightCtx.roundRect(x, y, width, height, 2);
+                  highlightCtx.fill();
+                } else {
+                  highlightCtx.fillRect(x, y, width, height);
+                }
+              }
+            }
+          }
+        }
+        highlightCanvases.push(highlightCanvas);
+      }
+
+      // 创建合并canvas
+      const maxWidth = Math.max(...pageWidths);
+      const mergedCanvas = document.createElement("canvas");
+      mergedCanvas.width = maxWidth;
+      mergedCanvas.height = totalHeight;
+      const ctx = mergedCanvas.getContext("2d");
+      
+      if (!ctx) {
+        alert("无法创建画布上下文");
+        return;
+      }
+
+      // 绘制所有页面（PDF + 高亮）
+      let currentY = 0;
+      for (let i = 0; i < pageCanvases.length; i++) {
+        // 绘制PDF
+        ctx.drawImage(pageCanvases[i], 0, currentY);
+        // 绘制高亮层
+        if (highlightCanvases[i]) {
+          ctx.drawImage(highlightCanvases[i], 0, currentY);
+        }
+        currentY += pageHeights[i];
+      }
+
+      // 下载
+      mergedCanvas.toBlob((blob) => {
+        if (!blob) {
+          alert("无法生成图片");
+          return;
+        }
+        
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${fileName ? fileName.replace('.pdf', '') : 'pdf'}_all_highlights.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    } catch (error) {
+      console.error("下载所有高亮层失败:", error);
+      alert("下载失败，请重试");
+    }
+  };
+
   return (
     <div className="space-y-4" ref={containerRef}>
       <div className="flex flex-wrap gap-3 items-center justify-between bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
@@ -1265,6 +1886,24 @@ export default function PDFViewer() {
           <button onClick={() => handleZoom("in")} className={buttonClass}><ZoomIn className="w-4 h-4" /></button>
           <button onClick={handleRotate} className={buttonClass}><RotateCw className="w-4 h-4" /></button>
           <button onClick={handleFullScreen} className={buttonClass}><Maximize className="w-4 h-4" /></button>
+          {highlights.size > 0 && (
+            <>
+              <button 
+                onClick={handleDownloadHighlights} 
+                className={buttonClass}
+                title="下载当前页面的高亮层"
+              >
+                <Download className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={handleDownloadAllHighlights} 
+                className={buttonClass}
+                title="下载所有页面的高亮层"
+              >
+                <Download className="w-4 h-4" /> 全部
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1281,7 +1920,8 @@ export default function PDFViewer() {
           </button>
         </div>
 
-        <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+        <div className="flex flex-col gap-2 flex-1 min-w-[200px]">
+          <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -1307,6 +1947,28 @@ export default function PDFViewer() {
               "搜索"
             )}
           </button>
+          </div>
+          {/* 精确匹配选项 */}
+          <div className="flex items-center gap-4 text-xs">
+            <label className="flex items-center gap-1.5 cursor-pointer text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200">
+              <input
+                type="checkbox"
+                checked={matchCase}
+                onChange={(e) => setMatchCase(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+              />
+              <span>区分大小写</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200">
+              <input
+                type="checkbox"
+                checked={wholeWords}
+                onChange={(e) => setWholeWords(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+              />
+              <span>整词匹配（精确）</span>
+            </label>
+          </div>
         </div>
       </div>
 
