@@ -19,13 +19,22 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 # 邮件配置（选择以下方式之一）
 
-# 方式1：使用 SMTP 服务器
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_SECURE=false
-SMTP_USER=your-email@example.com
-SMTP_PASS=your-password
-SMTP_FROM=noreply@example.com
+# 方式1：使用 SMTP 服务器（推荐用于生产环境）
+# QQ 邮箱配置示例：
+SMTP_HOST=smtp.qq.com
+SMTP_PORT=465
+SMTP_SECURE=true
+SMTP_USER=your-email@qq.com
+SMTP_PASS=your-authorization-code
+SMTP_FROM=your-email@qq.com
+
+# 其他 SMTP 服务器配置示例：
+# SMTP_HOST=smtp.example.com
+# SMTP_PORT=587
+# SMTP_SECURE=false
+# SMTP_USER=your-email@example.com
+# SMTP_PASS=your-password
+# SMTP_FROM=noreply@example.com
 
 # 方式2：使用 Gmail（需要应用专用密码）
 GMAIL_USER=your-email@gmail.com
@@ -84,9 +93,32 @@ GMAIL_PASS=your-app-specific-password
    GMAIL_PASS=your-app-specific-password
    ```
 
-### SMTP 配置
+### QQ 邮箱配置（推荐）
 
-如果您有自己的 SMTP 服务器：
+1. **开启 SMTP 服务**
+   - 登录 QQ 邮箱：https://mail.qq.com
+   - 点击"设置" → "账户"
+   - 找到"POP3/IMAP/SMTP/Exchange/CardDAV/CalDAV服务"
+   - 开启"POP3/SMTP服务"或"IMAP/SMTP服务"
+
+2. **获取授权码**
+   - 在"账户"设置页面，点击"生成授权码"
+   - 按照提示发送短信验证
+   - 复制生成的授权码（16位字符）
+
+3. **在 `.env.local` 中配置：**
+   ```env
+   SMTP_HOST=smtp.qq.com
+   SMTP_PORT=465
+   SMTP_SECURE=true
+   SMTP_USER=your-email@qq.com
+   SMTP_PASS=your-authorization-code
+   SMTP_FROM=your-email@qq.com
+   ```
+
+### 其他 SMTP 配置
+
+如果您使用其他 SMTP 服务器：
 
 ```env
 SMTP_HOST=smtp.example.com
@@ -96,6 +128,10 @@ SMTP_USER=your-email@example.com
 SMTP_PASS=your-password
 SMTP_FROM=noreply@example.com
 ```
+
+**注意：**
+- 端口 465 使用 SSL（`SMTP_SECURE=true`）
+- 端口 587 使用 STARTTLS（`SMTP_SECURE=false`）
 
 ### 开发模式（测试邮箱）
 

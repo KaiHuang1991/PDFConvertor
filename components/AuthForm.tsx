@@ -38,7 +38,29 @@ export default function AuthForm({ mode, onSuccess }: AuthFormProps) {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "操作失败");
+        // 显示更详细的错误信息
+        const errorMessage = data.message || data.error || "操作失败";
+        console.error('❌ API 错误:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: data.error,
+          message: data.message,
+          details: data.details
+        });
+        
+        // 如果是数据库连接错误，提供更友好的提示
+        if (data.error === '数据库连接失败' || data.error === '服务器配置错误') {
+          throw new Error(
+            '数据库连接失败。\n\n' +
+            '请检查：\n' +
+            '1. .env.local 文件中是否设置了 MONGODB_URI\n' +
+            '2. MongoDB 服务是否正在运行\n' +
+            '3. 连接字符串是否正确\n\n' +
+            '详细配置指南请查看 MONGODB_SETUP.md 文件'
+          );
+        }
+        
+        throw new Error(errorMessage);
       }
 
       if (mode === "login") {
@@ -54,7 +76,20 @@ export default function AuthForm({ mode, onSuccess }: AuthFormProps) {
           window.location.href = "/";
         }, 1000);
       } else {
-        setSuccess(data.message || "注册成功！请检查您的邮箱以验证账户。");
+        const message = data.message || "注册成功！请检查您的邮箱以验证账户。";
+        setSuccess(message);
+        
+        // 如果是开发模式且有预览链接，显示提示
+        if (data.emailPreviewUrl) {
+          console.log('📧 邮件预览链接:', data.emailPreviewUrl);
+          setTimeout(() => {
+            setSuccess(
+              message + '\n\n' +
+              '📧 开发模式：邮件不会发送到真实邮箱。\n' +
+              '请查看服务器控制台或浏览器控制台获取邮件预览链接。'
+            );
+          }, 2000);
+        }
       }
     } catch (err: any) {
       setError(err.message || "操作失败，请稍后重试");

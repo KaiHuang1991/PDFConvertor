@@ -1,6 +1,7 @@
 import { MongoClient, Db } from 'mongodb';
 
 if (!process.env.MONGODB_URI) {
+  console.error('❌ [数据库] MONGODB_URI 环境变量未设置');
   throw new Error('请在 .env.local 中添加 MONGODB_URI 环境变量');
 }
 
@@ -17,19 +18,41 @@ if (process.env.NODE_ENV === 'development') {
   };
 
   if (!globalWithMongo._mongoClientPromise) {
+    console.log('📦 [数据库] 正在连接 MongoDB...');
     client = new MongoClient(uri, options);
-    globalWithMongo._mongoClientPromise = client.connect();
+    globalWithMongo._mongoClientPromise = client.connect().then((client) => {
+      console.log('✅ [数据库] MongoDB 连接成功');
+      return client;
+    }).catch((error) => {
+      console.error('❌ [数据库] MongoDB 连接失败:', error.message);
+      throw error;
+    });
   }
   clientPromise = globalWithMongo._mongoClientPromise;
 } else {
   // 生产模式
+  console.log('📦 [数据库] 正在连接 MongoDB...');
   client = new MongoClient(uri, options);
-  clientPromise = client.connect();
+  clientPromise = client.connect().then((client) => {
+    console.log('✅ [数据库] MongoDB 连接成功');
+    return client;
+  }).catch((error) => {
+    console.error('❌ [数据库] MongoDB 连接失败:', error.message);
+    throw error;
+  });
 }
 
 export async function getDb(): Promise<Db> {
-  const client = await clientPromise;
-  return client.db(process.env.MONGODB_DB_NAME || 'pdfconvertor');
+  try {
+    const client = await clientPromise;
+    const dbName = process.env.MONGODB_DB_NAME || 'pdfconvertor';
+    const db = client.db(dbName);
+    console.log(`📦 [数据库] 使用数据库: ${dbName}`);
+    return db;
+  } catch (error: any) {
+    console.error('❌ [数据库] 获取数据库实例失败:', error.message);
+    throw new Error(`数据库连接失败: ${error.message}`);
+  }
 }
 
 export default clientPromise;

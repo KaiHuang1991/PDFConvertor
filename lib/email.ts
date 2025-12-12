@@ -1,16 +1,26 @@
 import nodemailer from 'nodemailer';
 
+// 缓存 Ethereal Email 账户（开发模式）
+let etherealAccount: nodemailer.TestAccount | null = null;
+
 // 创建邮件传输器
-const createTransporter = () => {
+const createTransporter = async () => {
   // 如果配置了 SMTP，使用 SMTP
   if (process.env.SMTP_HOST) {
+    const port = parseInt(process.env.SMTP_PORT || '587');
+    const secure = port === 465 || process.env.SMTP_SECURE === 'true';
+    
     return nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true',
+      port: port,
+      secure: secure, // 465 端口使用 SSL，587 端口使用 STARTTLS
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
+      },
+      // QQ 邮箱需要设置 tls
+      tls: {
+        rejectUnauthorized: false, // 允许自签名证书
       },
     });
   }
@@ -27,23 +37,63 @@ const createTransporter = () => {
   }
 
   // 开发模式：使用 Ethereal Email（测试邮箱）
-  return nodemailer.createTransporter({
+  // 如果没有账户，创建一个新的
+  if (!etherealAccount) {
+    try {
+      etherealAccount = await nodemailer.createTestAccount();
+      console.log('📧 [开发模式] 已创建 Ethereal Email 测试账户:');
+      console.log('   邮箱:', etherealAccount.user);
+      console.log('   密码:', etherealAccount.pass);
+      console.log('   查看邮件: https://ethereal.email');
+    } catch (error: any) {
+      console.error('❌ [开发模式] 创建 Ethereal Email 账户失败:', error.message);
+      throw new Error('无法创建测试邮箱账户，请配置 SMTP 或 Gmail');
+    }
+  }
+
+  return nodemailer.createTransport({
     host: 'smtp.ethereal.email',
     port: 587,
+    secure: false,
     auth: {
-      user: 'ethereal.user@ethereal.email',
-      pass: 'ethereal.pass',
+      user: etherealAccount.user,
+      pass: etherealAccount.pass,
     },
   });
 };
 
 export async function sendVerificationEmail(email: string, token: string) {
-  const transporter = createTransporter();
+  const transporter = await createTransporter();
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const verificationUrl = `${appUrl}/verify-email?token=${token}`;
+  const verificationUrl = `${appUrl}/auth/verify-email?token=${token}`;
+
+  // 确定发件人地址
+  // QQ 邮箱要求发件人地址必须与登录邮箱（SMTP_USER）一致
+  let fromAddress: string;
+  if (process.env.SMTP_FROM) {
+    fromAddress = process.env.SMTP_FROM;
+  } else if (process.env.SMTP_USER) {
+    // 优先使用 SMTP_USER（QQ 邮箱要求发件人必须是登录邮箱）
+    fromAddress = process.env.SMTP_USER;
+  } else if (process.env.GMAIL_USER) {
+    fromAddress = process.env.GMAIL_USER;
+  } else {
+    // 开发模式：使用 Ethereal Email 账户的邮箱
+    const isDevMode = process.env.NODE_ENV === 'development' && !process.env.SMTP_HOST && !process.env.GMAIL_USER;
+    if (isDevMode && etherealAccount) {
+      fromAddress = etherealAccount.user;
+    } else {
+      fromAddress = 'noreply@pdfconvertor.com';
+    }
+  }
+  
+  // 验证发件人地址格式
+  if (!fromAddress || !fromAddress.includes('@')) {
+    throw new Error('发件人地址格式不正确，必须是有效的邮箱地址');
+  }
 
   const mailOptions = {
-    from: process.env.SMTP_FROM || process.env.GMAIL_USER || 'noreply@pdfconvertor.com',
+    from: fromAddress,
     to: email,
     subject: '验证您的邮箱 - AIPDF Pro',
     html: `
@@ -67,22 +117,78 @@ export async function sendVerificationEmail(email: string, token: string) {
   };
 
   try {
+    console.log('📧 [邮件] 发送配置:');
+    console.log('   发件人:', fromAddress);
+    console.log('   收件人:', email);
+    console.log('   SMTP主机:', process.env.SMTP_HOST || '未配置');
+    
     const info = await transporter.sendMail(mailOptions);
-    console.log('验证邮件已发送:', info.messageId);
-    return { success: true, messageId: info.messageId };
+    console.log('✅ 验证邮件已发送:', info.messageId);
+    
+    // 开发模式：如果是 Ethereal Email，打印预览链接
+    if (process.env.NODE_ENV === 'development' && !process.env.SMTP_HOST && !process.env.GMAIL_USER) {
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      if (previewUrl) {
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.log('📧 [开发模式] 邮件不会发送到真实邮箱！');
+        console.log('📧 [开发模式] 请使用以下链接查看邮件：');
+        console.log('   ', previewUrl);
+        console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      }
+    }
+    
+    return { success: true, messageId: info.messageId, previewUrl: nodemailer.getTestMessageUrl(info) || null };
   } catch (error: any) {
-    console.error('发送验证邮件失败:', error);
-    throw new Error('发送邮件失败，请稍后重试');
+    console.error('❌ 发送验证邮件失败:');
+    console.error('   错误消息:', error.message);
+    console.error('   错误代码:', error.code);
+    console.error('   响应代码:', error.responseCode);
+    console.error('   命令:', error.command);
+    console.error('   发件人地址:', fromAddress);
+    console.error('   SMTP配置:', {
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
+      user: process.env.SMTP_USER ? `${process.env.SMTP_USER.substring(0, 3)}***` : '未配置',
+    });
+    if (error.response) {
+      console.error('   响应:', error.response);
+    }
+    throw new Error(`发送邮件失败: ${error.message}`);
   }
 }
 
 export async function sendPasswordResetEmail(email: string, token: string) {
-  const transporter = createTransporter();
+  const transporter = await createTransporter();
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const resetUrl = `${appUrl}/reset-password?token=${token}`;
+  const resetUrl = `${appUrl}/auth/reset-password?token=${token}`;
+
+  // 确定发件人地址
+  // QQ 邮箱要求发件人地址必须与登录邮箱（SMTP_USER）一致
+  let fromAddress: string;
+  if (process.env.SMTP_FROM) {
+    fromAddress = process.env.SMTP_FROM;
+  } else if (process.env.SMTP_USER) {
+    // 优先使用 SMTP_USER（QQ 邮箱要求发件人必须是登录邮箱）
+    fromAddress = process.env.SMTP_USER;
+  } else if (process.env.GMAIL_USER) {
+    fromAddress = process.env.GMAIL_USER;
+  } else {
+    // 开发模式：使用 Ethereal Email 账户的邮箱
+    const isDevMode = process.env.NODE_ENV === 'development' && !process.env.SMTP_HOST && !process.env.GMAIL_USER;
+    if (isDevMode && etherealAccount) {
+      fromAddress = etherealAccount.user;
+    } else {
+      fromAddress = 'noreply@pdfconvertor.com';
+    }
+  }
+  
+  // 验证发件人地址格式
+  if (!fromAddress || !fromAddress.includes('@')) {
+    throw new Error('发件人地址格式不正确，必须是有效的邮箱地址');
+  }
 
   const mailOptions = {
-    from: process.env.SMTP_FROM || process.env.GMAIL_USER || 'noreply@pdfconvertor.com',
+    from: fromAddress,
     to: email,
     subject: '重置您的密码 - AIPDF Pro',
     html: `
@@ -107,10 +213,19 @@ export async function sendPasswordResetEmail(email: string, token: string) {
 
   try {
     const info = await transporter.sendMail(mailOptions);
-    console.log('密码重置邮件已发送:', info.messageId);
+    console.log('✅ 密码重置邮件已发送:', info.messageId);
+    
+    // 开发模式：如果是 Ethereal Email，打印预览链接
+    if (process.env.NODE_ENV === 'development' && !process.env.SMTP_HOST && !process.env.GMAIL_USER) {
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      if (previewUrl) {
+        console.log('📧 [开发模式] 邮件预览链接:', previewUrl);
+      }
+    }
+    
     return { success: true, messageId: info.messageId };
   } catch (error: any) {
-    console.error('发送密码重置邮件失败:', error);
+    console.error('❌ 发送密码重置邮件失败:', error);
     throw new Error('发送邮件失败，请稍后重试');
   }
 }
