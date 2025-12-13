@@ -1,26 +1,35 @@
 import { getDb } from '../db';
 import bcrypt from 'bcryptjs';
 
+export type UserType = 'free' | 'premium' | 'vip';
+
 export interface User {
   _id?: string;
   email: string;
   password: string;
   name?: string;
+  avatar?: string; // 头像URL
+  birthDate?: Date; // 出生日期
+  userType: UserType; // 用户类型：free（免费用户）, premium（会员用户）, vip（VIP用户）
   emailVerified: boolean;
   emailVerificationToken?: string;
   emailVerificationExpires?: Date;
   resetPasswordToken?: string;
   resetPasswordExpires?: Date;
+  profileCompleted: boolean; // 是否完成个人信息填写
   createdAt: Date;
   updatedAt: Date;
 }
 
 export class UserModel {
-  static async create(userData: {
-    email: string;
-    password: string;
-    name?: string;
-  }): Promise<User> {
+  static async create(
+    userData: {
+      email: string;
+      password: string;
+      name?: string;
+    },
+    originalPassword?: string // 原始密码（用于激活后发送邮件，仅临时存储）
+  ): Promise<User> {
     try {
       console.log('📝 [UserModel] 开始创建用户:', { email: userData.email });
       const db = await getDb();
@@ -45,21 +54,31 @@ export class UserModel {
       const emailVerificationExpires = new Date();
       emailVerificationExpires.setHours(emailVerificationExpires.getHours() + 24); // 24小时后过期
 
-      const newUser: User = {
+      const newUser: any = {
         email: userData.email,
         password: hashedPassword,
         name: userData.name,
+        userType: 'free', // 默认免费用户
         emailVerified: false,
         emailVerificationToken,
         emailVerificationExpires,
+        profileCompleted: false, // 注册时未完成个人信息
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
+      // 临时存储原始密码（用于激活后发送邮件，发送后会被删除）
+      if (originalPassword) {
+        newUser.tempPassword = originalPassword;
+      }
+
       console.log('📝 [UserModel] 插入用户到数据库...');
       const result = await users.insertOne(newUser);
       console.log('✅ [UserModel] 用户创建成功:', result.insertedId);
-      return { ...newUser, _id: result.insertedId.toString() };
+      const createdUser = { ...newUser, _id: result.insertedId.toString() };
+      // 返回时删除临时密码字段（不暴露给外部）
+      delete createdUser.tempPassword;
+      return createdUser as User;
     } catch (error: any) {
       console.error('❌ [UserModel] 创建用户失败:');
       console.error('   错误消息:', error.message);
@@ -101,7 +120,7 @@ export class UserModel {
     return await bcrypt.compare(password, user.password);
   }
 
-  static async verifyEmail(token: string): Promise<boolean> {
+  static async verifyEmail(token: string): Promise<User | null> {
     const db = await getDb();
     const users = db.collection<User>('users');
 
@@ -111,7 +130,7 @@ export class UserModel {
     });
 
     if (!user) {
-      return false;
+      return null;
     }
 
     await users.updateOne(
@@ -126,7 +145,9 @@ export class UserModel {
       }
     );
 
-    return true;
+    // 返回更新后的用户信息
+    const updatedUser = await users.findOne({ _id: user._id });
+    return updatedUser ? { ...updatedUser, _id: updatedUser._id?.toString() } : null;
   }
 
   static async createPasswordResetToken(email: string): Promise<string | null> {
@@ -185,6 +206,76 @@ export class UserModel {
     );
 
     return true;
+  }
+
+  // 验证密码强度
+  static validatePasswordStrength(password: string): { valid: boolean; error?: string } {
+    // 长度检查：必须大于8位
+    if (password.length < 8) {
+      return { valid: false, error: '密码长度必须至少8位' };
+    }
+
+    // 特殊字符检查
+    const specialCharRegex = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/;
+    if (!specialCharRegex.test(password)) {
+      return { valid: false, error: '密码必须包含至少一个特殊字符（如 !@#$%^&* 等）' };
+    }
+
+    return { valid: true };
+  }
+
+  // 更新用户信息
+  static async updateProfile(
+    userId: string,
+    updates: {
+      name?: string;
+      avatar?: string;
+      birthDate?: Date;
+    }
+  ): Promise<boolean> {
+    const db = await getDb();
+    const users = db.collection<User>('users');
+    const { ObjectId } = require('mongodb');
+
+    try {
+      await users.updateOne(
+        { _id: new ObjectId(userId) },
+        {
+          $set: {
+            ...updates,
+            profileCompleted: true,
+            updatedAt: new Date(),
+          },
+        }
+      );
+      return true;
+    } catch (error) {
+      console.error('更新用户信息失败:', error);
+      return false;
+    }
+  }
+
+  // 更新用户类型（用于升级会员等）
+  static async updateUserType(userId: string, userType: UserType): Promise<boolean> {
+    const db = await getDb();
+    const users = db.collection<User>('users');
+    const { ObjectId } = require('mongodb');
+
+    try {
+      await users.updateOne(
+        { _id: new ObjectId(userId) },
+        {
+          $set: {
+            userType,
+            updatedAt: new Date(),
+          },
+        }
+      );
+      return true;
+    } catch (error) {
+      console.error('更新用户类型失败:', error);
+      return false;
+    }
   }
 }
 

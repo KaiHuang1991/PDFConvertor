@@ -12,10 +12,23 @@ interface AuthFormProps {
 export default function AuthForm({ mode, onSuccess }: AuthFormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [passwordStrength, setPasswordStrength] = useState({ valid: false, message: "" });
+
+  const validatePassword = (pwd: string) => {
+    if (pwd.length < 8) {
+      return { valid: false, message: '密码长度必须至少8位' };
+    }
+    const specialCharRegex = /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/;
+    if (!specialCharRegex.test(pwd)) {
+      return { valid: false, message: '密码必须包含至少一个特殊字符（如 !@#$%^&* 等）' };
+    }
+    return { valid: true, message: '' };
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,10 +37,25 @@ export default function AuthForm({ mode, onSuccess }: AuthFormProps) {
     setLoading(true);
 
     try {
+      // 注册时验证密码
+      if (mode === "register") {
+        if (password !== confirmPassword) {
+          setError("两次输入的密码不一致");
+          setLoading(false);
+          return;
+        }
+        const validation = validatePassword(password);
+        if (!validation.valid) {
+          setError(validation.message);
+          setLoading(false);
+          return;
+        }
+      }
+
       const url = mode === "login" ? "/api/auth/login" : "/api/auth/register";
       const body = mode === "login" 
         ? { email, password }
-        : { email, password, name: name || undefined };
+        : { email, password, confirmPassword, name: name || undefined };
 
       const response = await fetch(url, {
         method: "POST",
@@ -78,6 +106,11 @@ export default function AuthForm({ mode, onSuccess }: AuthFormProps) {
       } else {
         const message = data.message || "注册成功！请检查您的邮箱以验证账户。";
         setSuccess(message);
+        
+        // 保存邮箱到localStorage，以便邮箱验证后使用
+        if (email) {
+          localStorage.setItem('registeredEmail', email);
+        }
         
         // 如果是开发模式且有预览链接，显示提示
         if (data.emailPreviewUrl) {
@@ -144,14 +177,49 @@ export default function AuthForm({ mode, onSuccess }: AuthFormProps) {
           <input
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (mode === "register") {
+                setPasswordStrength(validatePassword(e.target.value));
+              }
+            }}
             required
-            minLength={6}
+            minLength={mode === "register" ? 8 : 6}
             className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-            placeholder="请输入密码（至少6位）"
+            placeholder={mode === "register" ? "请输入密码（至少8位，包含特殊字符）" : "请输入密码"}
           />
         </div>
+        {mode === "register" && password && (
+          <p className={`text-xs mt-1 ${passwordStrength.valid ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+            {passwordStrength.message || '✓ 密码格式正确'}
+          </p>
+        )}
       </div>
+
+      {mode === "register" && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            确认密码
+          </label>
+          <div className="relative">
+            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              minLength={8}
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+              placeholder="请再次输入密码"
+            />
+          </div>
+          {confirmPassword && password !== confirmPassword && (
+            <p className="text-xs mt-1 text-red-600 dark:text-red-400">
+              两次输入的密码不一致
+            </p>
+          )}
+        </div>
+      )}
 
       {error && (
         <motion.div

@@ -6,8 +6,10 @@ import { ArrowLeft, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import FileUploader from "@/components/FileUploader";
 import ChatWithPDF from "@/components/ChatWithPDF";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function ChatPage() {
+  const { t } = useLanguage();
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
 
   return (
@@ -22,12 +24,12 @@ export default function ChatPage() {
                 className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition"
               >
                 <ArrowLeft className="w-5 h-5" />
-                <span>返回首页</span>
+                <span>{t.pages.backToHome}</span>
               </Link>
               <div className="h-6 w-px bg-gray-300 dark:bg-gray-700" />
               <div className="flex items-center gap-2">
                 <MessageSquare className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-                <h1 className="text-xl font-bold">AI智能聊天</h1>
+                <h1 className="text-xl font-bold">{t.chat.title}</h1>
               </div>
             </div>
           </div>
@@ -44,10 +46,10 @@ export default function ChatPage() {
           className="text-center mb-12"
         >
           <h2 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            AI智能聊天助手
+            {t.chat.subtitle}
           </h2>
           <p className="text-lg text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
-            与PDF对话，智能问答、总结、提取关键信息 - 让AI帮您快速理解文档内容
+            {t.chat.description}
           </p>
         </motion.div>
 

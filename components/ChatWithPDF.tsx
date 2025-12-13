@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Loader2, MessageSquare, Bot, User } from "lucide-react";
 import { extractTextFromPDF } from "@/lib/pdf-utils";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface ChatWithPDFProps {
   files: File[];
@@ -15,6 +16,7 @@ interface Message {
 }
 
 export default function ChatWithPDF({ files }: ChatWithPDFProps) {
+  const { t } = useLanguage();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -43,14 +45,14 @@ export default function ChatWithPDF({ files }: ChatWithPDFProps) {
       setMessages([
         {
           role: "assistant",
-          content: `✅ 已成功提取PDF内容（共${pageCount}页）。您可以问我关于这份PDF的任何问题，比如："总结一下这份文档"、"第5页说了什么"、"提取关键信息"等。`,
+          content: t.chatWithPDF.extractSuccess.replace('{pageCount}', pageCount.toString()),
         },
       ]);
     } catch (error: any) {
       setMessages([
         {
           role: "assistant",
-          content: `❌ 提取PDF文本失败：${error.message}。请确保PDF未加密或尝试其他文件。`,
+          content: t.chatWithPDF.extractFailed.replace('{error}', error.message),
         },
       ]);
     } finally {
@@ -80,7 +82,7 @@ export default function ChatWithPDF({ files }: ChatWithPDFProps) {
 
       if (!response.ok) {
         // 尝试读取详细的错误信息
-        let errorMessage = "AI服务暂时不可用，请稍后重试";
+        let errorMessage = t.chatWithPDF.serviceUnavailable;
         try {
           const errorData = await response.json();
           if (errorData.error) {
@@ -88,7 +90,7 @@ export default function ChatWithPDF({ files }: ChatWithPDFProps) {
           }
         } catch (e) {
           // 如果无法解析JSON，使用默认错误信息
-          errorMessage = `请求失败 (状态码: ${response.status})`;
+          errorMessage = t.chatWithPDF.requestFailed.replace('{status}', response.status.toString());
         }
         throw new Error(errorMessage);
       }
@@ -101,7 +103,7 @@ export default function ChatWithPDF({ files }: ChatWithPDFProps) {
     } catch (error: any) {
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `❌ 错误：${error.message}` },
+        { role: "assistant", content: t.chatWithPDF.error.replace('{error}', error.message) },
       ]);
     } finally {
       setLoading(false);
@@ -112,7 +114,7 @@ export default function ChatWithPDF({ files }: ChatWithPDFProps) {
     return (
       <div className="text-center py-12 text-gray-500 dark:text-gray-400">
         <MessageSquare className="w-16 h-16 mx-auto mb-4 opacity-50" />
-        <p>请先上传PDF文件以开始AI聊天</p>
+        <p>{t.chatWithPDF.uploadFirst}</p>
       </div>
     );
   }
@@ -123,11 +125,11 @@ export default function ChatWithPDF({ files }: ChatWithPDFProps) {
       <div className="p-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-2">
           <Bot className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-          <h3 className="font-semibold">AI PDF助手</h3>
+          <h3 className="font-semibold">{t.chatWithPDF.aiAssistant}</h3>
           {extracting && (
             <span className="ml-auto text-sm text-gray-500 flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin" />
-              正在提取PDF内容...
+              {t.chatWithPDF.extracting}
             </span>
           )}
         </div>
@@ -190,7 +192,7 @@ export default function ChatWithPDF({ files }: ChatWithPDFProps) {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-            placeholder={pdfText ? "问关于PDF的任何问题..." : "等待PDF内容提取..."}
+            placeholder={pdfText ? t.chatWithPDF.askAnything : t.chatWithPDF.waitingExtract}
             disabled={loading || !pdfText || extracting}
             className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           />
@@ -207,7 +209,7 @@ export default function ChatWithPDF({ files }: ChatWithPDFProps) {
           </button>
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-          💡 提示：可以问"总结这份文档"、"第X页说了什么"、"提取关键信息"等
+          {t.chatWithPDF.tip}
         </p>
       </div>
     </div>

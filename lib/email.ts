@@ -230,3 +230,84 @@ export async function sendPasswordResetEmail(email: string, token: string) {
   }
 }
 
+// 发送账号密码邮件（邮箱激活后）
+export async function sendAccountInfoEmail(
+  email: string,
+  password: string
+): Promise<{ success: boolean; messageId?: string; previewUrl?: string | null }> {
+  const transporter = await createTransporter();
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+
+  // 确定发件人地址
+  let fromAddress: string;
+  if (process.env.SMTP_FROM) {
+    fromAddress = process.env.SMTP_FROM;
+  } else if (process.env.SMTP_USER) {
+    fromAddress = process.env.SMTP_USER;
+  } else if (process.env.GMAIL_USER) {
+    fromAddress = process.env.GMAIL_USER;
+  } else {
+    const isDevMode = process.env.NODE_ENV === 'development' && !process.env.SMTP_HOST && !process.env.GMAIL_USER;
+    if (isDevMode && etherealAccount) {
+      fromAddress = etherealAccount.user;
+    } else {
+      fromAddress = 'noreply@pdfconvertor.com';
+    }
+  }
+
+  if (!fromAddress || !fromAddress.includes('@')) {
+    throw new Error('发件人地址格式不正确，必须是有效的邮箱地址');
+  }
+
+  const mailOptions = {
+    from: fromAddress,
+    to: email,
+    subject: '欢迎使用 AIPDF Pro - 您的账号信息',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #2563eb;">欢迎使用 AIPDF Pro！</h2>
+        <p>您的邮箱已验证成功，账户已激活。以下是您的账号信息，请妥善保管：</p>
+        
+        <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+          <p style="margin: 10px 0;"><strong>登录邮箱：</strong>${email}</p>
+          <p style="margin: 10px 0;"><strong>登录密码：</strong><code style="background-color: #e5e7eb; padding: 4px 8px; border-radius: 4px;">${password}</code></p>
+        </div>
+
+        <p style="color: #dc2626; font-weight: bold; background-color: #fee2e2; padding: 12px; border-radius: 6px; border-left: 4px solid #dc2626;">
+          ⚠️ 安全提示：请妥善保管您的密码，不要将密码泄露给他人。建议您定期更换密码以确保账户安全。
+        </p>
+
+        <p style="text-align: center; margin: 30px 0;">
+          <a href="${appUrl}/auth/login" 
+             style="background-color: #2563eb; color: white; padding: 12px 24px; 
+                    text-decoration: none; border-radius: 6px; display: inline-block;">
+            立即登录
+          </a>
+        </p>
+
+        <p style="color: #999; font-size: 12px; margin-top: 30px;">
+          如果您没有注册此账户，请忽略此邮件或联系我们的支持团队。
+        </p>
+      </div>
+    `,
+  };
+
+  try {
+    const info = await transporter.sendMail(mailOptions);
+    console.log('✅ 账号信息邮件已发送:', info.messageId);
+
+    if (process.env.NODE_ENV === 'development' && !process.env.SMTP_HOST && !process.env.GMAIL_USER) {
+      const previewUrl = nodemailer.getTestMessageUrl(info);
+      if (previewUrl) {
+        console.log('📧 [开发模式] 邮件预览链接:', previewUrl);
+      }
+      return { success: true, messageId: info.messageId, previewUrl };
+    }
+
+    return { success: true, messageId: info.messageId };
+  } catch (error: any) {
+    console.error('❌ 发送账号信息邮件失败:', error);
+    throw new Error('发送邮件失败，请稍后重试');
+  }
+}
+

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
+import { useLanguage } from "@/contexts/LanguageContext";
 import {
   Image as ImageIcon,
   FileText,
@@ -33,6 +34,7 @@ interface PDFConverterProps {
 type ConvertFormat = "image" | "text" | "html" | "word";
 
 export default function PDFConverter({ file }: PDFConverterProps) {
+  const { t } = useLanguage();
   const [activeFormat, setActiveFormat] = useState<ConvertFormat | null>(null);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
@@ -79,9 +81,9 @@ export default function PDFConverter({ file }: PDFConverterProps) {
       const baseName = file.name.replace(/\.pdf$/i, "");
       await downloadImages(images, baseName, imageFormat);
 
-      setSuccess(`成功转换 ${images.length} 张图片！`);
+      setSuccess(t.pdfConverter.imagesSuccess.replace('{count}', images.length.toString()));
     } catch (err: any) {
-      setError(err.message || "转换失败");
+      setError(err.message || t.pdfConverter.convertFailed);
     } finally {
       setLoading(false);
     }
@@ -104,9 +106,9 @@ export default function PDFConverter({ file }: PDFConverterProps) {
       const filename = file.name.replace(/\.pdf$/i, ".txt");
       await downloadFile(blob, filename);
 
-      setSuccess("文本转换成功！");
+      setSuccess(t.pdfConverter.textSuccess);
     } catch (err: any) {
-      setError(err.message || "转换失败");
+      setError(err.message || t.pdfConverter.convertFailed);
     } finally {
       setLoading(false);
     }
@@ -135,9 +137,9 @@ export default function PDFConverter({ file }: PDFConverterProps) {
       const filename = file.name.replace(/\.pdf$/i, ".html");
       await downloadFile(blob, filename);
 
-      setSuccess("HTML 转换成功！");
+      setSuccess(t.pdfConverter.htmlSuccess);
     } catch (err: any) {
-      setError(err.message || "转换失败");
+      setError(err.message || t.pdfConverter.convertFailed);
     } finally {
       setLoading(false);
     }
@@ -162,9 +164,9 @@ export default function PDFConverter({ file }: PDFConverterProps) {
         setProgress({ current, total });
       });
 
-      setSuccess("Word 转换成功！");
+      setSuccess(t.pdfConverter.wordSuccess);
     } catch (err: any) {
-      setError(err.message || "转换失败");
+      setError(err.message || t.pdfConverter.convertFailed);
     } finally {
       setLoading(false);
     }
@@ -190,10 +192,10 @@ export default function PDFConverter({ file }: PDFConverterProps) {
               <ImageIcon className="w-8 h-8 text-blue-600 dark:text-blue-400" />
             </div>
             <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">
-              PDF 转图片
+              {t.pdfConverter.toImage}
             </h3>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              将 PDF 转换为 PNG 或 JPG 图片
+              {t.pdfConverter.toImageDesc}
             </p>
           </div>
         </motion.div>
@@ -214,10 +216,10 @@ export default function PDFConverter({ file }: PDFConverterProps) {
               <FileText className="w-8 h-8 text-green-600 dark:text-green-400" />
             </div>
             <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">
-              PDF 转文本
+              {t.pdfConverter.toText}
             </h3>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              提取 PDF 中的文本内容
+              {t.pdfConverter.toTextDesc}
             </p>
           </div>
         </motion.div>
@@ -238,10 +240,10 @@ export default function PDFConverter({ file }: PDFConverterProps) {
               <Globe className="w-8 h-8 text-purple-600 dark:text-purple-400" />
             </div>
             <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">
-              PDF 转 HTML
+              {t.pdfConverter.toHTML}
             </h3>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              将 PDF 转换为 HTML 网页
+              {t.pdfConverter.toHTMLDesc}
             </p>
           </div>
         </motion.div>
@@ -262,10 +264,10 @@ export default function PDFConverter({ file }: PDFConverterProps) {
               <FileType className="w-8 h-8 text-orange-600 dark:text-orange-400" />
             </div>
             <h3 className="font-semibold text-lg text-gray-800 dark:text-gray-200">
-              PDF 转 Word
+              {t.pdfConverter.toWord}
             </h3>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              精准还原 PDF 排版格式
+              {t.pdfConverter.toWordDesc}
             </p>
           </div>
         </motion.div>
@@ -284,14 +286,14 @@ export default function PDFConverter({ file }: PDFConverterProps) {
               <div className="flex items-center gap-2 mb-4">
                 <Settings className="w-5 h-5 text-blue-600" />
                 <h4 className="font-semibold text-gray-800 dark:text-gray-200">
-                  图片转换设置
+                  {t.pdfConverter.imageSettings}
                 </h4>
               </div>
 
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    图片格式
+                    {t.pdfConverter.imageFormat}
                   </label>
                   <div className="flex gap-3">
                     <button
@@ -319,7 +321,7 @@ export default function PDFConverter({ file }: PDFConverterProps) {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                    缩放比例: {imageScale}x
+                    {t.pdfConverter.scale}: {imageScale}x
                   </label>
                   <input
                     type="range"
@@ -331,16 +333,16 @@ export default function PDFConverter({ file }: PDFConverterProps) {
                     className="w-full"
                   />
                   <div className="flex justify-between text-xs text-gray-500 mt-1">
-                    <span>0.5x (低质量)</span>
-                    <span>2.0x (推荐)</span>
-                    <span>3.0x (高质量)</span>
+                    <span>{t.pdfConverter.lowQuality}</span>
+                    <span>{t.pdfConverter.recommended}</span>
+                    <span>{t.pdfConverter.highQuality}</span>
                   </div>
                 </div>
 
                 {imageFormat === "jpg" && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      JPEG 质量: {Math.round(imageQuality * 100)}%
+                      {t.pdfConverter.jpegQuality}: {Math.round(imageQuality * 100)}%
                     </label>
                     <input
                       type="range"
@@ -365,13 +367,13 @@ export default function PDFConverter({ file }: PDFConverterProps) {
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
                       <span>
-                        转换中... ({progress.current}/{progress.total})
+                        {t.pdfConverter.converting} ({progress.current}/{progress.total})
                       </span>
                     </>
                   ) : (
                     <>
                       <Download className="w-5 h-5" />
-                      <span>转换为图片</span>
+                      <span>{t.pdfConverter.convertToImages}</span>
                     </>
                   )}
                 </button>
@@ -385,12 +387,12 @@ export default function PDFConverter({ file }: PDFConverterProps) {
               <div className="flex items-center gap-2 mb-4">
                 <FileText className="w-5 h-5 text-green-600" />
                 <h4 className="font-semibold text-gray-800 dark:text-gray-200">
-                  文本提取
+                  {t.pdfConverter.textExtraction}
                 </h4>
               </div>
 
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                将提取 PDF 中的所有文本内容，保存为 TXT 文件。
+                {t.pdfConverter.textExtractionDesc}
               </p>
 
               <button
@@ -402,13 +404,13 @@ export default function PDFConverter({ file }: PDFConverterProps) {
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
                     <span>
-                      提取中... ({progress.current}/{progress.total})
+                      {t.pdfConverter.converting} ({progress.current}/{progress.total})
                     </span>
                   </>
                 ) : (
                   <>
                     <Download className="w-5 h-5" />
-                    <span>提取文本</span>
+                    <span>{t.pdfConverter.convertToText}</span>
                   </>
                 )}
               </button>
@@ -421,7 +423,7 @@ export default function PDFConverter({ file }: PDFConverterProps) {
               <div className="flex items-center gap-2 mb-4">
                 <Globe className="w-5 h-5 text-purple-600" />
                 <h4 className="font-semibold text-gray-800 dark:text-gray-200">
-                  HTML 转换设置
+                  {t.pdfConverter.htmlSettings}
                 </h4>
               </div>
 
@@ -438,14 +440,14 @@ export default function PDFConverter({ file }: PDFConverterProps) {
                     htmlFor="includeImages"
                     className="text-sm font-medium text-gray-700 dark:text-gray-300"
                   >
-                    包含页面图片
+                    {t.pdfConverter.includeImages}
                   </label>
                 </div>
 
                 {htmlIncludeImages && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                      图片格式
+                      {t.pdfConverter.imageFormat}
                     </label>
                     <div className="flex gap-3">
                       <button
@@ -481,13 +483,13 @@ export default function PDFConverter({ file }: PDFConverterProps) {
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
                       <span>
-                        转换中... ({progress.current}/{progress.total})
+                        {t.pdfConverter.converting} ({progress.current}/{progress.total})
                       </span>
                     </>
                   ) : (
                     <>
                       <Download className="w-5 h-5" />
-                      <span>转换为 HTML</span>
+                      <span>{t.pdfConverter.convertToHTML}</span>
                     </>
                   )}
                 </button>
@@ -501,13 +503,13 @@ export default function PDFConverter({ file }: PDFConverterProps) {
               <div className="flex items-center gap-2 mb-4">
                 <FileType className="w-5 h-5 text-orange-600" />
                 <h4 className="font-semibold text-gray-800 dark:text-gray-200">
-                  Word 转换设置
+                  {t.pdfConverter.wordSettings}
                 </h4>
               </div>
 
               <div className="space-y-3">
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                  精准还原 PDF 的原始排版，包括字体、颜色、大小、位置等格式信息。
+                  {t.pdfConverter.toWordDesc}
                 </p>
 
                 <div className="flex items-center gap-3">
@@ -522,7 +524,7 @@ export default function PDFConverter({ file }: PDFConverterProps) {
                     htmlFor="preserveFormatting"
                     className="text-sm font-medium text-gray-700 dark:text-gray-300"
                   >
-                    保持原始格式（字体、颜色、大小、粗体、斜体）
+                    {t.pdfConverter.preserveFormattingFull}
                   </label>
                 </div>
 
@@ -538,7 +540,7 @@ export default function PDFConverter({ file }: PDFConverterProps) {
                     htmlFor="preserveLayout"
                     className="text-sm font-medium text-gray-700 dark:text-gray-300"
                   >
-                    保持原始布局（位置、间距、对齐方式）
+                    {t.pdfConverter.preserveLayoutFull}
                   </label>
                 </div>
 
@@ -554,7 +556,7 @@ export default function PDFConverter({ file }: PDFConverterProps) {
                     htmlFor="wordIncludeImages"
                     className="text-sm font-medium text-gray-700 dark:text-gray-300"
                   >
-                    包含页面图片
+                    {t.pdfConverter.includeImages}
                   </label>
                 </div>
 
@@ -567,13 +569,13 @@ export default function PDFConverter({ file }: PDFConverterProps) {
                     <>
                       <Loader2 className="w-5 h-5 animate-spin" />
                       <span>
-                        转换中... ({progress.current}/{progress.total})
+                        {t.pdfConverter.converting} ({progress.current}/{progress.total})
                       </span>
                     </>
                   ) : (
                     <>
                       <Download className="w-5 h-5" />
-                      <span>转换为 Word</span>
+                      <span>{t.pdfConverter.convertToWord}</span>
                     </>
                   )}
                 </button>

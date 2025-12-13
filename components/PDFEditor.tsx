@@ -19,6 +19,7 @@ import {
   FileText,
   PenTool,
 } from "lucide-react";
+import { useLanguage } from "@/contexts/LanguageContext";
 import {
   insertImage,
   insertShape,
@@ -44,6 +45,7 @@ interface EditOperation {
 }
 
 export default function PDFEditor() {
+  const { t } = useLanguage();
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfInstance, setPdfInstance] = useState<any>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -884,7 +886,7 @@ export default function PDFEditor() {
 
   const handleSave = async () => {
     if (!pdfFile || operations.length === 0) {
-      setError("没有可保存的编辑操作");
+      setError(t.editor.noEditsToSave);
       return;
     }
 
@@ -1202,7 +1204,7 @@ export default function PDFEditor() {
 
   const handleDeletePage = async () => {
     if (!pdfFile || totalPages <= 1) {
-      setError("至少需要保留一页");
+      setError(t.editor.atLeastOnePage);
       return;
     }
     setLoading(true);
@@ -1230,15 +1232,15 @@ export default function PDFEditor() {
   };
 
   const tools = [
-    { id: "select" as ToolType, icon: PenTool, label: "选择", color: "gray" },
-    { id: "image" as ToolType, icon: ImageIcon, label: "图像", color: "blue" },
-    { id: "rectangle" as ToolType, icon: Square, label: "矩形", color: "blue" },
-    { id: "circle" as ToolType, icon: Circle, label: "圆形", color: "blue" },
-    { id: "line" as ToolType, icon: Minus, label: "直线", color: "blue" },
-    { id: "highlight" as ToolType, icon: Highlighter, label: "高亮", color: "yellow" },
-    { id: "underline" as ToolType, icon: Type, label: "下划线", color: "red" },
-    { id: "textbox" as ToolType, icon: FileText, label: "文本框", color: "green" },
-    { id: "signature" as ToolType, icon: FileSignature, label: "签名", color: "purple" },
+    { id: "select" as ToolType, icon: PenTool, label: t.editor.select, color: "gray" },
+    { id: "image" as ToolType, icon: ImageIcon, label: t.editor.image, color: "blue" },
+    { id: "rectangle" as ToolType, icon: Square, label: t.editor.rectangle, color: "blue" },
+    { id: "circle" as ToolType, icon: Circle, label: t.editor.circle, color: "blue" },
+    { id: "line" as ToolType, icon: Minus, label: t.editor.line, color: "blue" },
+    { id: "highlight" as ToolType, icon: Highlighter, label: t.editor.highlight, color: "yellow" },
+    { id: "underline" as ToolType, icon: Type, label: t.editor.underline, color: "red" },
+    { id: "textbox" as ToolType, icon: FileText, label: t.editor.textBox, color: "green" },
+    { id: "signature" as ToolType, icon: FileSignature, label: t.editor.signature, color: "purple" },
   ];
 
   return (
@@ -1249,7 +1251,7 @@ export default function PDFEditor() {
           <div className="flex flex-wrap items-center gap-4">
             <label className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg cursor-pointer hover:bg-blue-700 transition">
               <Upload className="w-4 h-4" />
-              <span>上传PDF</span>
+              <span>{t.editor.uploadPDF}</span>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -1267,17 +1269,17 @@ export default function PDFEditor() {
                     disabled={currentPage <= 1}
                     className="px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg disabled:opacity-50"
                   >
-                    上一页
+                    {t.editor.previousPage}
                   </button>
                   <span className="px-4 py-2 text-sm">
-                    第 {currentPage} / {totalPages} 页
+                    {t.editor.pageOf.replace('{current}', currentPage.toString()).replace('{total}', totalPages.toString())}
                   </span>
                   <button
                     onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                     disabled={currentPage >= totalPages}
                     className="px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg disabled:opacity-50"
                   >
-                    下一页
+                    {t.editor.nextPage}
                   </button>
                 </div>
 
@@ -1286,14 +1288,14 @@ export default function PDFEditor() {
                     onClick={() => setScale(Math.max(0.5, scale - 0.1))}
                     className="px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg"
                   >
-                    缩小
+                    {t.editor.zoomOut}
                   </button>
                   <span className="px-2 text-sm">{Math.round(scale * 100)}%</span>
                   <button
                     onClick={() => setScale(Math.min(2, scale + 0.1))}
                     className="px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg"
                   >
-                    放大
+                    {t.editor.zoomIn}
                   </button>
                 </div>
 
@@ -1303,14 +1305,14 @@ export default function PDFEditor() {
                     className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
                   >
                     <Plus className="w-4 h-4 inline mr-1" />
-                    添加页面
+                    {t.editor.addPage}
                   </button>
                   <button
                     onClick={handleDeletePage}
                     className="px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                   >
                     <Trash2 className="w-4 h-4 inline mr-1" />
-                    删除页面
+                    {t.editor.deletePage}
                   </button>
                   <button
                     onClick={handleSave}
@@ -1322,7 +1324,7 @@ export default function PDFEditor() {
                     ) : (
                       <Download className="w-4 h-4" />
                     )}
-                    保存PDF
+                    {t.editor.savePDF}
                   </button>
                 </div>
               </>
@@ -1339,7 +1341,7 @@ export default function PDFEditor() {
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           {/* 左侧工具栏 */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-            <h3 className="font-semibold mb-4 text-gray-800 dark:text-gray-200">编辑工具</h3>
+            <h3 className="font-semibold mb-4 text-gray-800 dark:text-gray-200">{t.editor.editingTools}</h3>
             <div className="space-y-2">
               {tools.map((tool) => {
                 const Icon = tool.icon;
@@ -1436,7 +1438,7 @@ export default function PDFEditor() {
                 />
                 {previewImage && (
                   <div className="absolute top-4 right-4 bg-white dark:bg-gray-800 p-2 rounded shadow-lg">
-                    <p className="text-sm mb-2">点击PDF放置图像</p>
+                    <p className="text-sm mb-2">{t.editor.clickToPlaceImage}</p>
                     <img src={previewImage} alt="Preview" className="max-w-xs max-h-48" />
                     <button
                       onClick={() => {
@@ -1445,21 +1447,21 @@ export default function PDFEditor() {
                       }}
                       className="mt-2 w-full px-2 py-1 bg-red-600 text-white rounded text-sm"
                     >
-                      取消
+                      {t.editor.cancel}
                     </button>
                   </div>
                 )}
               </div>
             ) : (
               <div className="flex items-center justify-center h-96 text-gray-500">
-                请上传PDF文件开始编辑
+                {t.editor.uploadPDFFile}
               </div>
             )}
           </div>
 
           {/* 右侧操作历史和属性面板 */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-            <h3 className="font-semibold mb-4 text-gray-800 dark:text-gray-200">操作历史</h3>
+            <h3 className="font-semibold mb-4 text-gray-800 dark:text-gray-200">{t.editor.operationHistory}</h3>
             <div className="space-y-2 max-h-96 overflow-auto mb-4">
               {operations
                 .filter((op) => op.pageIndex === currentPage - 1)
@@ -1489,7 +1491,7 @@ export default function PDFEditor() {
                   </div>
                 ))}
               {operations.filter((op) => op.pageIndex === currentPage - 1).length === 0 && (
-                <p className="text-sm text-gray-500 text-center py-4">暂无操作</p>
+                <p className="text-sm text-gray-500 text-center py-4">{t.editor.noOperations}</p>
               )}
             </div>
             
@@ -1499,11 +1501,11 @@ export default function PDFEditor() {
               if (selectedOp && (selectedOp.type === "image" || selectedOp.type === "signature")) {
                 return (
                   <div className="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
-                    <h4 className="font-semibold mb-3 text-gray-800 dark:text-gray-200">图片属性</h4>
+                    <h4 className="font-semibold mb-3 text-gray-800 dark:text-gray-200">{t.editor.imageProperties}</h4>
                     <div className="space-y-3">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                          旋转角度（度）
+                          {t.editor.rotationAngle}
                         </label>
                         <div className="flex items-center gap-2">
                           <input
@@ -1537,18 +1539,18 @@ export default function PDFEditor() {
                               );
                             }}
                             className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                            title="顺时针旋转90度"
+                            title={t.editor.degrees}
                           >
                             90°
                           </button>
                         </div>
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          输入0-360度的旋转角度，或点击按钮快速旋转90度
+                          {t.editor.imageRotationNote}
                         </p>
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                          透明度
+                          {t.editor.opacity}
                         </label>
                         <input
                           type="range"
@@ -1585,13 +1587,13 @@ export default function PDFEditor() {
         {textPosition && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
             <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full">
-              <h3 className="font-semibold mb-4">输入文本</h3>
+              <h3 className="font-semibold mb-4">{t.editor.inputText}</h3>
               <textarea
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
                 className="w-full p-2 border rounded mb-4"
                 rows={4}
-                placeholder="输入文本内容..."
+                placeholder={t.editor.enterTextContent}
                 autoFocus
               />
               <div className="flex gap-2">
@@ -1599,7 +1601,7 @@ export default function PDFEditor() {
                   onClick={handleTextSubmit}
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                 >
-                  确定
+                  {t.editor.confirm}
                 </button>
                 <button
                   onClick={() => {
@@ -1609,7 +1611,7 @@ export default function PDFEditor() {
                   }}
                   className="flex-1 px-4 py-2 bg-gray-300 dark:bg-gray-600 rounded hover:bg-gray-400"
                 >
-                  取消
+                  {t.editor.cancel}
                 </button>
               </div>
             </div>

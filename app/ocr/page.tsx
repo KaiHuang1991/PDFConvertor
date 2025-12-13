@@ -16,11 +16,13 @@ import {
   type TableData,
 } from "@/lib/ocr-utils";
 import { recognizeWithCloudOCR, pdfToImages, type CloudOCRResult } from "@/lib/ocr-cloud";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 type ViewMode = "text" | "table" | "stats";
 type OCREngine = "local" | "cloud";
 
 export default function OCRPage() {
+  const { t } = useLanguage();
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -368,12 +370,12 @@ export default function OCRPage() {
                 className="flex items-center gap-2 text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition"
               >
                 <ArrowLeft className="w-5 h-5" />
-                <span>返回首页</span>
+                <span>{t.pages.backToHome}</span>
               </Link>
               <div className="h-6 w-px bg-gray-300 dark:bg-gray-700" />
               <div className="flex items-center gap-2">
                 <Image className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-                <h1 className="text-xl font-bold">OCR识别</h1>
+                <h1 className="text-xl font-bold">{t.ocr.title}</h1>
               </div>
             </div>
           </div>
@@ -390,10 +392,10 @@ export default function OCRPage() {
           className="text-center mb-12"
         >
           <h2 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-            OCR文字识别
+            {t.ocr.subtitle}
           </h2>
           <p className="text-lg text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
-            支持中文、手写、表格识别，识别后直接导出Word - 完全前端运行，保护隐私
+            {t.ocr.description}
           </p>
         </motion.div>
 
@@ -516,19 +518,19 @@ export default function OCRPage() {
                     {processing ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        <span>正在识别中... {progress > 0 && `${progress}%`}</span>
+                        <span>{t.ocr.processing} {progress > 0 && `${progress}%`}</span>
                       </>
                     ) : (
                       <>
                         <Image className="w-5 h-5" />
-                        <span>开始OCR识别</span>
+                        <span>{t.ocr.startOCR}</span>
                       </>
                     )}
                   </button>
                   <button
                     onClick={() => setShowSettings(!showSettings)}
                     className="px-4 py-4 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition"
-                    title="设置"
+                    title={t.ocr.settings}
                   >
                     <Settings className="w-5 h-5" />
                   </button>
@@ -556,7 +558,7 @@ export default function OCRPage() {
               {result && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between flex-wrap gap-2">
-                    <h3 className="text-lg font-semibold">识别结果</h3>
+                    <h3 className="text-lg font-semibold">{t.ocr.recognitionResult}</h3>
                     <div className="flex items-center gap-2">
                       {/* View Mode Tabs */}
                       <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
@@ -569,7 +571,7 @@ export default function OCRPage() {
                           }`}
                         >
                           <FileText className="w-4 h-4 inline mr-1" />
-                          文本
+                          {t.ocr.text}
                         </button>
                         {getAllTables().length > 0 && (
                           <button
@@ -581,7 +583,7 @@ export default function OCRPage() {
                             }`}
                           >
                             <Table2 className="w-4 h-4 inline mr-1" />
-                            表格 ({getAllTables().reduce((sum, item) => sum + item.tables.length, 0)})
+                            {t.ocr.table} ({getAllTables().reduce((sum, item) => sum + item.tables.length, 0)})
                           </button>
                         )}
                         <button
@@ -593,7 +595,7 @@ export default function OCRPage() {
                           }`}
                         >
                           <BarChart3 className="w-4 h-4 inline mr-1" />
-                          统计
+                          {t.ocr.stats}
                         </button>
                       </div>
                       <button

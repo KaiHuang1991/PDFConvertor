@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useLanguage } from "@/contexts/LanguageContext";
 import {
   Merge,
   Scissors,
@@ -30,6 +31,7 @@ interface PDFToolsProps {
 }
 
 export default function PDFTools({ files }: PDFToolsProps) {
+  const { t } = useLanguage();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<string | null>(null);
@@ -53,7 +55,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
 
   const handleMerge = async () => {
     if (files.length < 2) {
-      setError("至少需要2个PDF文件才能合并");
+      setError(t.pdfTools.atLeast2Files);
       return;
     }
     setLoading("merge");
@@ -62,7 +64,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
       const blob = await mergePDFs(files);
       downloadBlob(blob, "merged.pdf");
     } catch (err: any) {
-      setError(err.message || "合并失败");
+      setError(err.message || t.pdfTools.mergeFailed);
     } finally {
       setLoading(null);
     }
@@ -70,7 +72,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
 
   const handleSplit = async () => {
     if (files.length === 0 || !splitRanges.trim()) {
-      setError("请输入有效的页码范围");
+      setError(t.pdfTools.invalidRange);
       return;
     }
     setLoading("split");
@@ -82,7 +84,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
         downloadBlob(blob, `split_${idx + 1}.pdf`);
       });
     } catch (err: any) {
-      setError(err.message || "拆分失败");
+      setError(err.message || t.pdfTools.splitFailed);
     } finally {
       setLoading(null);
     }
@@ -108,7 +110,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
       setCompressionInfo({ originalSize, compressedSize });
       setCompressProgress(100);
     } catch (err: any) {
-      setError(err.message || "压缩失败");
+      setError(err.message || t.pdfTools.compressFailed);
       setCompressProgress(0);
     } finally {
       setLoading(null);
@@ -124,7 +126,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
   const handleUnlock = async () => {
     if (files.length === 0) return;
     if (!unlockPassword.trim()) {
-      setError("请输入PDF密码");
+      setError(t.pdfTools.enterPassword);
       return;
     }
     setLoading("unlock");
@@ -133,7 +135,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
       const blob = await unlockPDF(files[0], unlockPassword);
       downloadBlob(blob, "unlocked.pdf");
     } catch (err: any) {
-      setError(err.message || "解锁失败");
+      setError(err.message || t.pdfTools.unlockFailed);
     } finally {
       setLoading(null);
     }
@@ -142,7 +144,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
   const handleWatermark = async () => {
     if (files.length === 0) return;
     if (!watermarkText.trim()) {
-      setError("请输入水印文字");
+      setError(t.pdfTools.enterWatermarkText);
       return;
     }
     setLoading("watermark");
@@ -157,7 +159,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
       });
       downloadBlob(blob, "watermarked.pdf");
     } catch (err: any) {
-      setError(err.message || "添加水印失败");
+      setError(err.message || t.pdfTools.watermarkFailed);
     } finally {
       setLoading(null);
     }
@@ -167,40 +169,40 @@ export default function PDFTools({ files }: PDFToolsProps) {
     {
       id: "merge",
       icon: Merge,
-      title: "合并PDF",
-      desc: "将多个PDF合并为一个",
+      title: t.pdfTools.merge,
+      desc: t.pdfTools.mergeDesc,
       action: handleMerge,
       disabled: files.length < 2,
     },
     {
       id: "split",
       icon: Scissors,
-      title: "拆分PDF",
-      desc: "按页码范围拆分PDF",
+      title: t.pdfTools.split,
+      desc: t.pdfTools.splitDesc,
       action: () => setActiveTool(activeTool === "split" ? null : "split"),
       disabled: files.length === 0,
     },
     {
       id: "compress",
       icon: Minimize2,
-      title: "压缩PDF",
-      desc: "减小PDF文件大小",
+      title: t.pdfTools.compress,
+      desc: t.pdfTools.compressDesc,
       action: () => setActiveTool(activeTool === "compress" ? null : "compress"),
       disabled: files.length === 0,
     },
     {
       id: "unlock",
       icon: Lock,
-      title: "解锁PDF",
-      desc: "移除PDF密码保护",
+      title: t.pdfTools.unlock,
+      desc: t.pdfTools.unlockDesc,
       action: () => setActiveTool(activeTool === "unlock" ? null : "unlock"),
       disabled: files.length === 0,
     },
     {
       id: "watermark",
       icon: ImageIcon,
-      title: "添加水印",
-      desc: "为PDF添加文字水印",
+      title: t.pdfTools.watermark,
+      desc: t.pdfTools.watermarkDesc,
       action: () => setActiveTool(activeTool === "watermark" ? null : "watermark"),
       disabled: files.length === 0,
     },
@@ -296,7 +298,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
                     <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-md">
                       <ImageIcon className="w-5 h-5 text-white" />
                     </div>
-                    水印设置
+                    {t.pdfTools.watermarkSettings}
                   </h3>
                   <button
                     onClick={() => setActiveTool(null)}
@@ -311,20 +313,20 @@ export default function PDFTools({ files }: PDFToolsProps) {
                 {/* 左侧：配置选项 */}
                 <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">水印文字</label>
+                  <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">{t.pdfTools.watermarkText}</label>
                   <input
                     type="text"
                     value={watermarkText}
                     onChange={(e) => setWatermarkText(e.target.value)}
                     className="w-full px-4 py-3 border-2 border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 shadow-sm hover:shadow-md"
-                    placeholder="请输入水印文字"
+                    placeholder={t.pdfTools.enterWatermarkText}
                   />
                 </div>
 
                 {/* 旋转角度：滑块和输入框在同一行 */}
                 <div>
                   <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">
-                    旋转角度: <span className="text-blue-600 dark:text-blue-400 font-bold">{watermarkRotation}°</span>
+                    {t.pdfTools.rotationAngle}: <span className="text-blue-600 dark:text-blue-400 font-bold">{watermarkRotation}°</span>
                   </label>
                   <div className="flex items-center gap-3">
                     <input
@@ -350,7 +352,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">
-                      行数: <span className="text-blue-600 dark:text-blue-400 font-bold">{watermarkRows}</span>
+                      {t.pdfTools.rows}: <span className="text-blue-600 dark:text-blue-400 font-bold">{watermarkRows}</span>
                     </label>
                     <input
                       type="number"
@@ -364,7 +366,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
 
                   <div>
                     <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">
-                      列数: <span className="text-blue-600 dark:text-blue-400 font-bold">{watermarkCols}</span>
+                      {t.pdfTools.cols}: <span className="text-blue-600 dark:text-blue-400 font-bold">{watermarkCols}</span>
                     </label>
                     <input
                       type="number"
@@ -380,7 +382,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
                 {/* 透明度：滑块和输入框在同一行 */}
                 <div>
                   <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">
-                    透明度: <span className="text-blue-600 dark:text-blue-400 font-bold">{Math.round(watermarkOpacity * 100)}%</span>
+                    {t.pdfTools.opacity}: <span className="text-blue-600 dark:text-blue-400 font-bold">{Math.round(watermarkOpacity * 100)}%</span>
                   </label>
                   <div className="flex items-center gap-3">
                     <input
@@ -406,7 +408,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
 
                 {/* 字体大小 */}
                 <div>
-                  <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">字体大小</label>
+                  <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">{t.pdfTools.fontSize}</label>
                   <input
                     type="number"
                     min="10"
@@ -425,12 +427,12 @@ export default function PDFTools({ files }: PDFToolsProps) {
                     {loading === "watermark" ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        <span>处理中...</span>
+                        <span>{t.pdfTools.processing}</span>
                       </>
                     ) : (
                       <>
                         <Download className="w-5 h-5" />
-                        <span>应用水印并下载</span>
+                        <span>{t.pdfTools.applyAndDownload}</span>
                       </>
                     )}
                   </button>
@@ -467,7 +469,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
                     <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-md">
                       <Scissors className="w-5 h-5 text-white" />
                     </div>
-                    拆分设置
+                    {t.pdfTools.splitSettings}
                   </h3>
                   <button
                     onClick={() => setActiveTool(null)}
@@ -480,17 +482,17 @@ export default function PDFTools({ files }: PDFToolsProps) {
 
               <div className="p-6 space-y-5">
                 <div>
-                  <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">页码范围</label>
+                  <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">{t.pdfTools.pageRange}</label>
                   <input
                     type="text"
                     value={splitRanges}
                     onChange={(e) => setSplitRanges(e.target.value)}
                     className="w-full px-4 py-3 border-2 border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 shadow-sm hover:shadow-md"
-                    placeholder="例如: 1-5,6-10,11-15"
+                    placeholder={t.pdfTools.pageRangeExample}
                   />
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 flex items-center gap-1">
                     <span>💡</span>
-                    用逗号分隔多个范围，例如：1-5,6-10
+                    {t.pdfTools.pageRangeTip}
                   </p>
                 </div>
 
@@ -503,12 +505,12 @@ export default function PDFTools({ files }: PDFToolsProps) {
                     {loading === "split" ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        <span>处理中...</span>
+                        <span>{t.pdfTools.processing}</span>
                       </>
                     ) : (
                       <>
                         <Download className="w-5 h-5" />
-                        <span>拆分并下载</span>
+                        <span>{t.pdfTools.splitAndDownload}</span>
                       </>
                     )}
                   </button>
@@ -533,7 +535,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
                     <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-md">
                       <Minimize2 className="w-5 h-5 text-white" />
                     </div>
-                    压缩设置
+                    {t.pdfTools.compressSettings}
                   </h3>
                   <button
                     onClick={() => {
@@ -559,7 +561,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
                           {files[0].name}
                         </p>
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          原始大小: {formatFileSize(files[0].size)}
+                          {t.pdfTools.originalSize}: {formatFileSize(files[0].size)}
                         </p>
                       </div>
                     </div>
@@ -571,7 +573,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                        压缩进度
+                        {t.pdfTools.compressProgress}
                       </span>
                       <span className="text-sm font-bold text-blue-600 dark:text-blue-400">
                         {compressProgress}%
@@ -595,13 +597,13 @@ export default function PDFTools({ files }: PDFToolsProps) {
                       <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400 mt-0.5" />
                       <div className="flex-1">
                         <p className="text-sm font-semibold text-green-800 dark:text-green-200 mb-2">
-                          压缩完成！
+                          {t.pdfTools.compressComplete}
                         </p>
                         <div className="space-y-1 text-xs text-green-700 dark:text-green-300">
-                          <p>原始大小: {formatFileSize(compressionInfo.originalSize)}</p>
-                          <p>压缩后: {formatFileSize(compressionInfo.compressedSize)}</p>
+                          <p>{t.pdfTools.originalSize}: {formatFileSize(compressionInfo.originalSize)}</p>
+                          <p>{t.pdfTools.compressedSize}: {formatFileSize(compressionInfo.compressedSize)}</p>
                           <p className="font-bold">
-                            减少: {(
+                            {t.pdfTools.reduce}: {(
                               ((compressionInfo.originalSize - compressionInfo.compressedSize) /
                                 compressionInfo.originalSize) *
                               100
@@ -624,12 +626,12 @@ export default function PDFTools({ files }: PDFToolsProps) {
                       {loading === "compress" ? (
                         <>
                           <Loader2 className="w-5 h-5 animate-spin" />
-                          <span>压缩中...</span>
+                          <span>{t.pdfTools.processing}</span>
                         </>
                       ) : (
                         <>
                           <Minimize2 className="w-5 h-5" />
-                          <span>开始压缩</span>
+                          <span>{t.pdfTools.startCompress}</span>
                         </>
                       )}
                     </button>
@@ -639,7 +641,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
                       className="flex-1 px-6 py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl font-bold hover:from-green-700 hover:to-emerald-700 transition-all duration-300 flex items-center justify-center gap-2 shadow-lg hover:shadow-xl transform hover:scale-[1.02]"
                     >
                       <Download className="w-5 h-5" />
-                      <span>下载压缩后的PDF</span>
+                      <span>{t.pdfTools.downloadCompressed}</span>
                     </button>
                   )}
                 </div>
@@ -647,7 +649,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
                 {/* 提示信息 */}
                 <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
                   <p className="text-xs text-blue-800 dark:text-blue-300">
-                    💡 提示：PDF压缩效果取决于文件内容。包含大量图片的PDF压缩效果更明显。
+                    {t.pdfTools.compressTip}
                   </p>
                 </div>
               </div>
@@ -670,7 +672,7 @@ export default function PDFTools({ files }: PDFToolsProps) {
                     <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-md">
                       <Lock className="w-5 h-5 text-white" />
                     </div>
-                    解锁设置
+                    {t.pdfTools.unlockSettings}
                   </h3>
                   <button
                     onClick={() => setActiveTool(null)}
@@ -683,13 +685,13 @@ export default function PDFTools({ files }: PDFToolsProps) {
 
               <div className="p-6 space-y-5">
                 <div>
-                  <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">PDF密码</label>
+                  <label className="block text-sm font-semibold mb-2 text-gray-700 dark:text-gray-300">{t.pdfTools.pdfPassword}</label>
                   <input
                     type="password"
                     value={unlockPassword}
                     onChange={(e) => setUnlockPassword(e.target.value)}
                     className="w-full px-4 py-3 border-2 border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 shadow-sm hover:shadow-md"
-                    placeholder="请输入PDF密码"
+                    placeholder={t.pdfTools.enterPassword}
                   />
                 </div>
 
@@ -702,12 +704,12 @@ export default function PDFTools({ files }: PDFToolsProps) {
                     {loading === "unlock" ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        <span>处理中...</span>
+                        <span>{t.pdfTools.processing}</span>
                       </>
                     ) : (
                       <>
                         <Download className="w-5 h-5" />
-                        <span>解锁并下载</span>
+                        <span>{t.pdfTools.unlockAndDownload}</span>
                       </>
                     )}
                   </button>

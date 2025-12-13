@@ -6,8 +6,17 @@ export async function POST(request: NextRequest) {
   try {
     console.log('📝 [注册] 收到注册请求');
     
-    const { email, password, name } = await request.json();
+    const { email, password, confirmPassword, name } = await request.json();
     console.log('📝 [注册] 输入数据:', { email, name: name ? '已提供' : '未提供', passwordLength: password?.length });
+    
+    // 验证确认密码
+    if (!confirmPassword || password !== confirmPassword) {
+      console.log('❌ [注册] 验证失败: 两次输入的密码不一致');
+      return NextResponse.json(
+        { error: '两次输入的密码不一致' },
+        { status: 400 }
+      );
+    }
 
     // 验证输入
     if (!email || !password) {
@@ -29,18 +38,19 @@ export async function POST(request: NextRequest) {
     }
 
     // 验证密码强度
-    if (password.length < 6) {
-      console.log('❌ [注册] 验证失败: 密码长度不足');
+    const passwordValidation = UserModel.validatePasswordStrength(password);
+    if (!passwordValidation.valid) {
+      console.log('❌ [注册] 验证失败: 密码强度不足');
       return NextResponse.json(
-        { error: '密码长度至少为6位' },
+        { error: passwordValidation.error || '密码不符合要求' },
         { status: 400 }
       );
     }
 
     console.log('📝 [注册] 开始创建用户...');
     
-    // 创建用户
-    const user = await UserModel.create({ email, password, name });
+    // 创建用户（临时保存原始密码以便激活后发送）
+    const user = await UserModel.create({ email, password, name }, password);
     console.log('✅ [注册] 用户创建成功:', { id: user._id, email: user.email });
 
     // 发送验证邮件

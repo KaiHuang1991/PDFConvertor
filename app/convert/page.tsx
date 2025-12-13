@@ -6,8 +6,10 @@ import { ArrowLeft, FileText, X } from "lucide-react";
 import Link from "next/link";
 import FileUploader from "@/components/FileUploader";
 import PDFConverter from "@/components/PDFConverter";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function ConvertPage() {
+  const { t, locale } = useLanguage();
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
 
   const handleFilesChange = (files: File[]) => {
@@ -32,7 +34,7 @@ export default function ConvertPage() {
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-white/50 dark:hover:bg-gray-800/50 hover:text-blue-600 dark:hover:text-blue-400 transition-all duration-200"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span className="text-sm font-medium">返回首页</span>
+                <span className="text-sm font-medium">{t.pages.backToHome}</span>
               </Link>
               <div className="h-6 w-px bg-gray-300/50 dark:bg-gray-700/50" />
               <div className="flex items-center gap-3">
@@ -40,7 +42,7 @@ export default function ConvertPage() {
                   <FileText className="w-5 h-5 text-white" />
                 </div>
                 <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                  PDF格式转换
+                  {t.convert.title}
                 </h1>
               </div>
             </div>
@@ -60,19 +62,19 @@ export default function ConvertPage() {
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-100 dark:bg-blue-900/30 rounded-full mb-4">
             <span className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></span>
             <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
-              完全本地处理，保护隐私
+              {t.convert.privacyNote}
             </span>
           </div>
           <h2 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            PDF 格式转换工具
+            {t.convert.subtitle}
           </h2>
           <p className="text-lg md:text-xl text-gray-700 dark:text-gray-300 max-w-2xl mx-auto leading-relaxed">
-            支持 PDF 转图片、文本、HTML 等多种格式
+            {t.convert.description}
             <br className="hidden md:block" />
             <span className="text-blue-600 dark:text-blue-400 font-semibold">
-              所有转换在浏览器中完成
+              {t.convert.browserOnly}
             </span>
-            ，无需上传服务器
+            {locale === 'zh' ? '，' : ', '}{t.convert.noServerUpload}
           </p>
         </motion.div>
 
@@ -140,10 +142,10 @@ export default function ConvertPage() {
               <FileText className="w-14 h-14 text-blue-600 dark:text-blue-400" />
             </div>
             <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-2">
-              准备转换 PDF
+              {t.convert.readyToConvert}
             </h3>
             <p className="text-gray-500 dark:text-gray-400 text-lg">
-              请先上传 PDF 文件以开始格式转换
+              {t.convert.uploadToStart}
             </p>
           </motion.div>
         )}
@@ -156,21 +158,13 @@ export default function ConvertPage() {
           className="max-w-4xl mx-auto mt-12 p-6 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-200 dark:border-blue-800"
         >
           <h4 className="font-semibold text-blue-900 dark:text-blue-200 mb-3">
-            💡 使用提示：
+            {t.convert.tips}
           </h4>
           <ul className="space-y-2 text-sm text-blue-800 dark:text-blue-300">
-            <li>
-              • <strong>PDF 转图片：</strong>支持 PNG 和 JPG 格式，可调整缩放比例和质量
-            </li>
-            <li>
-              • <strong>PDF 转文本：</strong>自动提取 PDF 中的所有文本内容
-            </li>
-            <li>
-              • <strong>PDF 转 HTML：</strong>生成包含文本和图片的 HTML 文件，可在浏览器中查看
-            </li>
-            <li>
-              • 所有转换操作在本地浏览器中完成，不会上传文件到服务器，保护您的隐私
-            </li>
+            <li>{t.convert.tipImage}</li>
+            <li>{t.convert.tipText}</li>
+            <li>{t.convert.tipHTML}</li>
+            <li>{t.convert.tipPrivacy}</li>
           </ul>
         </motion.div>
       </main>

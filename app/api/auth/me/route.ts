@@ -34,7 +34,11 @@ export async function GET(request: NextRequest) {
         id: user._id,
         email: user.email,
         name: user.name,
+        avatar: user.avatar,
+        birthDate: user.birthDate ? new Date(user.birthDate).toISOString().split('T')[0] : undefined,
+        userType: user.userType || 'free',
         emailVerified: user.emailVerified,
+        profileCompleted: user.profileCompleted || false,
       },
     });
   } catch (error: any) {

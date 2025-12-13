@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { User, LogOut, Mail, CheckCircle } from "lucide-react";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { User, LogOut, Mail, CheckCircle, UserCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 export default function UserMenu() {
   const { user, logout } = useAuth();
+  const { t } = useLanguage();
   const router = useRouter();
   const [showMenu, setShowMenu] = useState(false);
 
@@ -22,7 +24,7 @@ export default function UserMenu() {
         href="/auth/login"
         className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
       >
-        登录
+        {t.auth.login}
       </Link>
     );
   }
@@ -55,21 +57,29 @@ export default function UserMenu() {
               {user.emailVerified ? (
                 <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1">
                   <CheckCircle className="w-3 h-3" />
-                  邮箱已验证
+                  {t.auth.emailVerified}
                 </p>
               ) : (
                 <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
-                  邮箱未验证
+                  {t.auth.emailNotVerified}
                 </p>
               )}
             </div>
-            <div className="p-2">
+            <div className="p-2 space-y-1">
+              <Link
+                href="/profile"
+                onClick={() => setShowMenu(false)}
+                className="w-full flex items-center gap-2 px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition"
+              >
+                <UserCircle className="w-4 h-4" />
+                {t.auth.personalCenter}
+              </Link>
               <button
                 onClick={handleLogout}
                 className="w-full flex items-center gap-2 px-4 py-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition"
               >
                 <LogOut className="w-4 h-4" />
-                退出登录
+                {t.auth.logout}
               </button>
             </div>
           </div>

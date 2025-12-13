@@ -1,11 +1,17 @@
 "use client";
 
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { FileText, Sparkles, Image, ArrowRight, RefreshCw } from "lucide-react";
+import { FileText, Sparkles, Image, ArrowRight, RefreshCw, MoreVertical, Grid3x3 } from "lucide-react";
 import Link from "next/link";
 import UserMenu from "@/components/UserMenu";
+import NavigationPanel from "@/components/NavigationPanel";
+import LanguageSelector from "@/components/LanguageSelector";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function Home() {
+  const [showNavPanel, setShowNavPanel] = useState(false);
+  const { t } = useLanguage();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
@@ -22,29 +28,44 @@ export default function Home() {
             <div className="flex items-center gap-4">
               <nav className="hidden md:flex gap-6">
                 <Link href="/viewer" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
-                  PDF查看器
+                  {t.nav.pdfViewer}
                 </Link>
                 <Link href="/editor" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
-                  PDF编辑器
+                  {t.nav.pdfEditor}
                 </Link>
                 <Link href="/tools" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
-                  PDF工具
+                  {t.nav.pdfTools}
                 </Link>
                 <Link href="/convert" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
-                  格式转换
+                  {t.nav.formatConversion}
                 </Link>
                 <Link href="/chat" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
-                  AI聊天
+                  {t.nav.aiChat}
                 </Link>
                 <Link href="/ocr" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">
-                  OCR识别
+                  {t.nav.ocrRecognition}
                 </Link>
               </nav>
-              <UserMenu />
+              <div className="flex items-center gap-2">
+                {/* 语言选择器 */}
+                <LanguageSelector />
+                {/* 导航面板触发按钮 */}
+                <button
+                  onClick={() => setShowNavPanel(true)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+                  aria-label="打开导航菜单"
+                >
+                  <Grid3x3 className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                </button>
+                <UserMenu />
+              </div>
             </div>
           </div>
         </div>
       </header>
+
+      {/* 导航面板 */}
+      <NavigationPanel isOpen={showNavPanel} onClose={() => setShowNavPanel(false)} />
 
       {/* Hero Section */}
       <section className="container mx-auto px-4 py-16 text-center">
@@ -54,49 +75,49 @@ export default function Home() {
           transition={{ duration: 0.6 }}
         >
           <h2 className="text-5xl md:text-6xl font-bold mb-6 bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
-            下一代AI PDF工具
+            {t.home.title}
           </h2>
           <p className="text-xl md:text-2xl text-gray-600 dark:text-gray-300 mb-8 max-w-3xl mx-auto">
-            免费、快速、强大 - 合并、拆分、压缩、转换、解锁、OCR、智能聊天
+            {t.home.subtitle}
             <br />
-            <span className="text-blue-600 dark:text-blue-400 font-semibold">完全前端运行，保护您的隐私</span>
+            <span className="text-blue-600 dark:text-blue-400 font-semibold">{t.home.privacyNote}</span>
           </p>
         </motion.div>
       </section>
 
       {/* Features */}
       <section id="features" className="container mx-auto px-4 py-16">
-        <h3 className="text-3xl font-bold text-center mb-12">核心功能</h3>
+        <h3 className="text-3xl font-bold text-center mb-12">{t.home.coreFeatures}</h3>
         <div className="grid md:grid-cols-3 gap-8">
           {[
             { 
               icon: FileText, 
-              title: "PDF基础操作", 
-              desc: "合并、拆分、压缩、解锁密码、加水印，全部前端运行",
+              title: t.home.features.pdfBasicOps.title,
+              desc: t.home.features.pdfBasicOps.desc,
               href: "/tools"
             },
             { 
               icon: Image, 
-              title: "PDF编辑器", 
-              desc: "图像/形状插入、注释标记、页面管理、表单填写、签名添加",
+              title: t.home.features.pdfEditor.title,
+              desc: t.home.features.pdfEditor.desc,
               href: "/editor"
             },
             { 
               icon: RefreshCw, 
-              title: "PDF格式转换", 
-              desc: "PDF转图片、文本、HTML，支持批量转换，完全本地处理",
+              title: t.home.features.formatConversion.title,
+              desc: t.home.features.formatConversion.desc,
               href: "/convert"
             },
             { 
               icon: Sparkles, 
-              title: "AI智能聊天", 
-              desc: "与PDF对话，智能问答、总结、提取关键信息",
+              title: t.home.features.aiChat.title,
+              desc: t.home.features.aiChat.desc,
               href: "/chat"
             },
             { 
               icon: Image, 
-              title: "OCR识别", 
-              desc: "支持中文、手写、表格识别，识别后直接导出Word",
+              title: t.home.features.ocr.title,
+              desc: t.home.features.ocr.desc,
               href: "/ocr"
             },
           ].map((feature, idx) => (
@@ -131,22 +152,22 @@ export default function Home() {
           className="max-w-4xl mx-auto text-center"
         >
           <div className="p-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl text-white">
-            <h3 className="text-2xl md:text-3xl font-bold mb-4">准备好开始了吗？</h3>
+            <h3 className="text-2xl md:text-3xl font-bold mb-4">{t.home.getStarted}</h3>
             <p className="text-blue-100 mb-6 text-lg">
-              选择一个功能开始使用，所有操作都在浏览器中完成，完全保护您的隐私
+              {t.home.ctaDescription}
             </p>
             <div className="flex flex-wrap justify-center gap-4">
               <Link
                 href="/tools"
                 className="px-6 py-3 bg-white text-blue-600 rounded-lg font-semibold hover:bg-blue-50 transition"
               >
-                开始使用PDF工具
+                {t.home.startUsingTools}
               </Link>
               <Link
                 href="/chat"
                 className="px-6 py-3 bg-white/10 text-white border-2 border-white rounded-lg font-semibold hover:bg-white/20 transition"
               >
-                体验AI聊天
+                {t.home.tryAIChat}
               </Link>
             </div>
           </div>

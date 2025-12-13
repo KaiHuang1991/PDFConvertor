@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import { Upload, X, FileText } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatFileSize } from "@/lib/utils";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface FileUploaderProps {
   files: File[];
@@ -11,6 +12,7 @@ interface FileUploaderProps {
 }
 
 export default function FileUploader({ files, onFilesChange }: FileUploaderProps) {
+  const { t } = useLanguage();
   const [isDragging, setIsDragging] = useState(false);
 
   const handleDrop = useCallback(
@@ -97,11 +99,11 @@ export default function FileUploader({ files, onFilesChange }: FileUploaderProps
           </div>
           <div>
             <p className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-1">
-              拖拽PDF或图片文件到这里，或{" "}
-              <span className="text-blue-600 dark:text-blue-400 font-bold">点击选择文件</span>
+              {t.fileUploader.dragOrClick}{" "}
+              <span className="text-blue-600 dark:text-blue-400 font-bold">{t.fileUploader.clickToSelect}</span>
             </p>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              支持PDF、PNG、JPG等格式 • 完全前端处理 • 保护隐私
+              {t.fileUploader.formats}
             </p>
           </div>
         </label>
@@ -117,7 +119,7 @@ export default function FileUploader({ files, onFilesChange }: FileUploaderProps
             className="mt-6 space-y-2"
           >
             <h3 className="text-lg font-semibold mb-4 text-gray-800 dark:text-gray-200">
-              已上传的文件 <span className="text-blue-600 dark:text-blue-400">({files.length})</span>
+              {t.fileUploader.uploadedFiles} <span className="text-blue-600 dark:text-blue-400">({files.length})</span>
             </h3>
             {files.map((file, index) => (
               <motion.div
@@ -143,7 +145,7 @@ export default function FileUploader({ files, onFilesChange }: FileUploaderProps
                 <button
                   onClick={() => removeFile(index)}
                   className="ml-4 p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors duration-200 group"
-                  aria-label="删除文件"
+                  aria-label={t.fileUploader.deleteFile}
                 >
                   <X className="w-5 h-5 text-gray-500 dark:text-gray-400 group-hover:text-red-600 dark:group-hover:text-red-400 transition-colors" />
                 </button>

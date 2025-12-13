@@ -6,8 +6,10 @@ import { ArrowLeft, FileText } from "lucide-react";
 import Link from "next/link";
 import FileUploader from "@/components/FileUploader";
 import PDFTools from "@/components/PDFTools";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function ToolsPage() {
+  const { t } = useLanguage();
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
 
   return (
@@ -22,7 +24,7 @@ export default function ToolsPage() {
                 className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-white/50 dark:hover:bg-gray-800/50 hover:text-blue-600 dark:hover:text-blue-400 transition-all duration-200"
               >
                 <ArrowLeft className="w-4 h-4" />
-                <span className="text-sm font-medium">返回首页</span>
+                <span className="text-sm font-medium">{t.pages.backToHome}</span>
               </Link>
               <div className="h-6 w-px bg-gray-300/50 dark:bg-gray-700/50" />
               <div className="flex items-center gap-3">
@@ -30,7 +32,7 @@ export default function ToolsPage() {
                   <FileText className="w-5 h-5 text-white" />
                 </div>
                 <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                  PDF基础操作
+                  {t.tools.title}
                 </h1>
               </div>
             </div>
@@ -49,15 +51,13 @@ export default function ToolsPage() {
         >
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-100 dark:bg-blue-900/30 rounded-full mb-4">
             <span className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></span>
-            <span className="text-sm font-medium text-blue-700 dark:text-blue-300">完全本地处理，保护隐私</span>
+            <span className="text-sm font-medium text-blue-700 dark:text-blue-300">{t.tools.privacyNote}</span>
           </div>
           <h2 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent">
-            PDF基础操作工具
+            {t.tools.subtitle}
           </h2>
           <p className="text-lg md:text-xl text-gray-700 dark:text-gray-300 max-w-2xl mx-auto leading-relaxed">
-            合并、拆分、压缩、解锁密码、加水印
-            <br className="hidden md:block" />
-            <span className="text-blue-600 dark:text-blue-400 font-semibold">全部操作在浏览器中完成</span>，保护您的隐私安全
+            {t.home.features.pdfBasicOps.desc}
           </p>
         </motion.div>
 
@@ -95,10 +95,10 @@ export default function ToolsPage() {
               <FileText className="w-14 h-14 text-blue-600 dark:text-blue-400" />
             </div>
             <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-2">
-              准备开始处理PDF
+              {t.tools.readyToProcess}
             </h3>
             <p className="text-gray-500 dark:text-gray-400 text-lg">
-              请先上传PDF文件以开始使用工具
+              {t.tools.uploadFile}
             </p>
           </motion.div>
         )}

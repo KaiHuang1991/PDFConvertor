@@ -4,8 +4,10 @@ import { useState } from "react";
 import Link from "next/link";
 import AuthForm from "@/components/AuthForm";
 import { motion } from "framer-motion";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 export default function LoginPage() {
+  const { t } = useLanguage();
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 px-4">
       <motion.div
@@ -15,10 +17,10 @@ export default function LoginPage() {
       >
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-            欢迎回来
+            {t.login.welcomeBack}
           </h1>
           <p className="text-gray-600 dark:text-gray-400">
-            登录您的账户以继续使用 AIPDF Pro
+            {t.login.continueWith}
           </p>
         </div>
 
@@ -29,15 +31,15 @@ export default function LoginPage() {
             href="/auth/forgot-password"
             className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400"
           >
-            忘记密码？
+            {t.auth.forgotPassword}
           </Link>
           <p className="text-sm text-gray-600 dark:text-gray-400">
-            还没有账户？{" "}
+            {t.login.noAccount}{" "}
             <Link
               href="/auth/register"
               className="text-blue-600 hover:text-blue-700 dark:text-blue-400 font-medium"
             >
-              立即注册
+              {t.login.registerNow}
             </Link>
           </p>
         </div>
